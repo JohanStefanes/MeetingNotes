@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>de</string>
+    <key>CFBundleExecutable</key>
+    <string>MeetingNotes</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.johankoller.MeetingNotes</string>
+    <key>CFBundleName</key>
+    <string>MeetingNotes</string>
+    <key>CFBundleDisplayName</key>
+    <string>MeetingNotes</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Meeting Notes nimmt Meetings auf und transkribiert sie lokal mit Whisper.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Meeting Notes nimmt den Ton deines Macs (Teams, Zoom, Browser) mit auf, damit beide Seiten eines Calls im Transkript sind. Alles bleibt lokal.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Meeting Notes übernimmt Titel und Teilnehmer des laufenden Termins, damit Namen richtig geschrieben werden.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.johankoller.MeetingNotes</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>meetingnotes</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

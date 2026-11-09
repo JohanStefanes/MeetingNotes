@@ -1,0 +1,389 @@
+<!doctype html>
+<!-- MeetingNotes widgets for Claude (MCP Apps). mcp_server.py serves this file once per view and replaces __VIEW__
+     (meeting | todos | list | recording). Everything comes from tool calls through the host; no network.
+     The host bridge is JSON-RPC over postMessage (ext-apps protocol 2026-01-26), hand-written to stay small. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeetingNotes</title>
+<style>
+  /* colors from Design.swift (Theme) */
+  :root {
+    --canvas: #F4F3F0; --card: #FCFCFB; --soft: #F5F4F1; --fill: #F0EEE9; --beige: #ECE9E2; --line: #E6E3DC;
+    --text: #1F1E1C; --muted: #6E6A63; --accent: #1F9E6B; --danger: #C2412D;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --canvas: #1B1A18; --card: #232220; --soft: #2A2926; --fill: #302E2B; --beige: #3B3834; --line: #3A3733;
+      --text: #EDEBE7; --muted: #A39E95; --accent: #3DBE88; --danger: #E5735F; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --canvas: #1B1A18; --card: #232220; --soft: #2A2926; --fill: #302E2B; --beige: #3B3834; --line: #3A3733;
+    --text: #EDEBE7; --muted: #A39E95; --accent: #3DBE88; --danger: #E5735F; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: var(--text); }
+  .card { background: var(--card); border-radius: 14px; padding: 16px 18px; }
+  h1 { font: 400 22px/1.2 ui-serif, "New York", Georgia, serif; margin: 0 0 4px; }
+  h2 { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 18px 0 8px; }
+  h3 { font-size: 13px; margin: 14px 0 6px; }
+  p { margin: 0 0 8px; }
+  .meta { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--fill); border-radius: 999px; padding: 1px 8px; font-size: 11.5px; }
+  .ts { font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: var(--fill);
+        border: 0; border-radius: 5px; padding: 1px 5px; cursor: pointer; }
+  .ts:hover { color: var(--text); }
+  button { font: inherit; color: inherit; }
+  .btn { background: var(--beige); border: 0; border-radius: 10px; padding: 7px 14px; cursor: pointer; font-weight: 500; }
+  .btn:hover { filter: brightness(.97); }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.danger { background: var(--danger); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .link { background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-align: left; }
+  .link:hover { text-decoration: underline; }
+  input[type=text], input[type=search] { font: inherit; color: inherit; background: var(--soft); border: 1px solid var(--line);
+        border-radius: 9px; padding: 6px 10px; width: 100%; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  li.item { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+  li.item::before { content: "•"; color: var(--muted); }
+  li.todo::before { content: none; }
+  .check { width: 16px; height: 16px; margin-top: 1px; flex: none; border-radius: 5px; border: 1.5px solid var(--muted);
+           background: none; cursor: pointer; display: grid; place-items: center; padding: 0; }
+  .check.done { background: var(--accent); border-color: var(--accent); }
+  .check.done::after { content: ""; width: 8px; height: 4px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
+  .done-text { color: var(--muted); text-decoration: line-through; }
+  .owner { font-weight: 600; }
+  .tabs { display: flex; gap: 4px; background: var(--soft); border-radius: 10px; padding: 3px; width: fit-content; }
+  .tabs button { border: 0; background: none; border-radius: 8px; padding: 4px 10px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .transcript { max-height: 420px; overflow-y: auto; background: var(--soft); border-radius: 12px; padding: 10px 12px; }
+  .run { margin-bottom: 10px; }
+  .speaker { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 2px; }
+  .avatar { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 9px -apple-system, sans-serif; }
+  .line { display: flex; gap: 8px; padding: 1px 4px; border-radius: 6px; }
+  .line.hit { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .line .t { font: 500 11px ui-monospace, Menlo, monospace; color: var(--muted); padding-top: 2px; flex: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .group { background: var(--soft); border-radius: 12px; padding: 10px 12px; }
+  .group h3 { margin: 0 0 6px; display: flex; justify-content: space-between; gap: 8px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 10px; cursor: pointer; width: 100%; background: none; border: 0; text-align: left; }
+  .row:hover { background: var(--fill); }
+  .row .title { font: 400 15px ui-serif, "New York", Georgia, serif; }
+  .hits { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; display: inline-block; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 140px; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  .error { color: var(--danger); margin-top: 8px; }
+  .back { margin-bottom: 10px; }
+  .rename { display: inline-flex; gap: 4px; }
+  .rename input { width: 140px; padding: 2px 6px; }
+</style>
+</head>
+<body>
+<main class="card" id="app"><p class="empty">Lädt …</p></main>
+<script>
+"use strict";
+const VIEW = "__VIEW__";
+const PALETTE = ["#FF9500", "#007AFF", "#AF52DE", "#34C759", "#FF2D55", "#30B0C7", "#5856D6", "#A2845E"];   // SpeakerColor
+const $app = document.getElementById("app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- host bridge (JSON-RPC 2.0 over postMessage) ----------
+let nextId = 1;
+const pending = new Map(), handlers = {};
+const send = msg => window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*");
+const request = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++;
+  pending.set(id, { resolve, reject });
+  send({ id, method, params });
+});
+window.addEventListener("message", e => {
+  const m = e.data;
+  if (e.source !== window.parent || !m || m.jsonrpc !== "2.0") return;
+  if (m.id !== undefined && !m.method) {
+    const p = pending.get(m.id);
+    if (p) { pending.delete(m.id); m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); }
+    return;
+  }
+  if (m.id !== undefined) { send({ id: m.id, result: {} }); return; }   // ping, resource-teardown
+  handlers[m.method]?.(m.params || {});
+});
+const unwrap = r => {
+  const sc = r?.structuredContent;
+  if (sc && typeof sc === "object" && Object.keys(sc).length === 1 && "result" in sc) return sc.result;
+  return sc ?? r?.content?.[0]?.text;
+};
+async function call(name, args = {}) {
+  const r = await request("tools/call", { name, arguments: args });
+  if (r.isError) throw new Error((r.content?.[0]?.text || "Fehler").replace(/^Error executing tool \w+: /, ""));
+  return unwrap(r);
+}
+function applyContext(ctx) {
+  if (ctx.theme === "dark" || ctx.theme === "light") document.documentElement.setAttribute("data-theme", ctx.theme);
+}
+function watchSize() {
+  let last = 0;
+  const report = () => {
+    const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    if (h !== last) { last = h; send({ method: "ui/notifications/size-changed", params: { width: Math.ceil(window.innerWidth), height: h } }); }
+  };
+  new ResizeObserver(report).observe(document.body);
+  report();
+}
+
+// ---------- shared pieces ----------
+let args = {};
+const fail = e => { $app.querySelector(".error")?.remove(); $app.insertAdjacentHTML("beforeend", `<p class="error">${esc(e.message || e)}</p>`); };
+const busy = async (btn, work) => { if (btn) btn.disabled = true; try { await work(); } catch (e) { fail(e); } finally { if (btn) btn.disabled = false; } };
+const TODO = /^- \[([ xX])\] (.+?)\s*$/;
+const TODO_META = /^(.*?)(?: · \*\*(.+?)\*\*)?(?: · bis (.+?))?(?: `(\d\d:\d\d:\d\d)`)?$/;
+const tsChip = t => t ? ` <button class="ts" data-ts="${esc(t)}" title="Im Transkript zeigen">${esc(t)}</button>` : "";
+const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+  .replace(/`(\d\d:\d\d:\d\d)`/g, (_, t) => tsChip(t).trim()).replace(/`(.+?)`/g, "<code>$1</code>");
+const checkbox = (done, meeting, text) =>
+  `<button class="check${done ? " done" : ""}" role="checkbox" aria-checked="${done}" aria-label="${esc(text)}"
+     data-meeting="${esc(meeting)}" data-text="${esc(text)}" data-done="${done}"></button>`;
+
+/** Summary / notes markdown → HTML; checkbox lines become clickable to-dos. */
+function markdown(md, meeting) {
+  const out = [];
+  let list = false;
+  for (const line of String(md || "").split("\n")) {
+    const todo = line.match(TODO);
+    const bullet = !todo && line.match(/^[-*] (.*)$/);
+    if ((todo || bullet) && !list) { out.push("<ul>"); list = true; }
+    if (!(todo || bullet) && list) { out.push("</ul>"); list = false; }
+    if (todo) {
+      const [, text, owner, due, at] = todo[2].match(TODO_META), done = todo[1] !== " ";
+      out.push(`<li class="item todo">${checkbox(done, meeting, text)}<span><span class="${done ? "done-text" : ""}">${inline(text)}</span>`
+        + `${owner ? ` · <span class="owner">${esc(owner)}</span>` : ""}${due ? ` · bis ${esc(due)}` : ""}${tsChip(at)}</span></li>`);
+    } else if (bullet) out.push(`<li class="item"><span>${inline(bullet[1])}</span></li>`);
+    else if (line.startsWith("### ")) out.push(`<h3>${esc(line.slice(4))}</h3>`);
+    else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  if (list) out.push("</ul>");
+  return out.join("");
+}
+
+function initials(name) {
+  if (name.startsWith("Sprecher ")) return name.slice(9);
+  return name.split(" ").slice(0, 2).map(w => w[0] || "").join("").toUpperCase();
+}
+
+// ---------- meeting card ----------
+let meeting = null, backTo = null;
+
+async function openMeeting(id, from) {
+  backTo = from || null;
+  meeting = await call("meeting_data", { meeting_id: id });
+  renderMeeting();
+}
+
+function renderMeeting(jumpTo) {
+  const m = meeting, colors = {};
+  let html = backTo ? `<button class="btn back" data-action="back">← Zurück</button>` : "";
+  html += `<h1>${esc(m.title)}</h1><div class="meta"><span>${esc(m.date)}</span><span>${m.minutes} min</span>`
+    + (m.project ? `<span class="chip">${esc(m.project)}</span>` : "")
+    + (m.participants.length ? `<span>${esc(m.participants.join(", "))}</span>` : "") + `</div>`;
+  html += `<h2>Zusammenfassung</h2>` + (m.summary ? markdown(m.summary, m.id) : `<p class="empty">Noch keine Zusammenfassung.</p>
+    <button class="btn" data-action="summarize">Zusammenfassung erstellen</button>`);
+  if (m.notes) html += `<h2>Meine Notizen</h2>${markdown(m.notes, m.id)}`;
+  html += `<h2>Transkript</h2><div class="transcript">`;
+  let run = null;
+  for (const l of m.transcript) {
+    if (l.speaker !== run) {
+      if (run !== null) html += `</div>`;
+      run = l.speaker;
+      if (l.speaker && !(l.speaker in colors)) colors[l.speaker] = PALETTE[Object.keys(colors).length % PALETTE.length];
+      const c = colors[l.speaker];
+      html += `<div class="run">` + (l.speaker ? `<div class="speaker"><span class="avatar" style="color:${c};background:${c}29">${esc(initials(l.speaker))}</span>`
+        + `<button class="link" data-action="rename" data-speaker="${esc(l.speaker)}" title="Sprecher umbenennen">${esc(l.speaker)}</button></div>` : "");
+    }
+    html += `<div class="line" data-t="${esc(l.t)}"><span class="t">${esc(l.t)}</span><span>${esc(l.text)}</span></div>`;
+  }
+  html += (run !== null ? `</div>` : `<p class="empty">Kein Transkript.</p>`) + `</div>`;
+  $app.innerHTML = html;
+  if (jumpTo) jump(jumpTo);
+}
+
+function jump(t) {
+  const lines = [...$app.querySelectorAll(".line")];
+  const target = lines.find(l => l.dataset.t >= t) || lines[lines.length - 1];
+  if (!target) return;
+  lines.forEach(l => l.classList.remove("hit"));
+  target.classList.add("hit");
+  const box = target.closest(".transcript");
+  box.scrollTop = target.offsetTop - box.offsetTop - 40;
+}
+
+function startRename(btn) {
+  const old = btn.dataset.speaker;
+  const form = document.createElement("form");
+  form.className = "rename";
+  form.innerHTML = `<input type="text" aria-label="Neuer Name für ${esc(old)}" value="${esc(old.startsWith("Sprecher ") ? "" : old)}" placeholder="Name">`
+    + `<button class="btn" type="submit">OK</button>`;
+  btn.replaceWith(form);
+  const input = form.querySelector("input");
+  input.focus();
+  input.addEventListener("keydown", e => { if (e.key === "Escape") renderMeeting(); });
+  form.addEventListener("submit", e => {
+    e.preventDefault();
+    const name = input.value.trim();
+    if (!name || name === old) return renderMeeting();
+    busy(form.querySelector("button"), async () => { await call("rename_speaker", { meeting_id: meeting.id, old, new: name }); await openMeeting(meeting.id, backTo); });
+  });
+}
+
+// ---------- to-do board ----------
+let todos = [], groupBy = "meeting";
+
+function renderTodos() {
+  const groups = new Map();
+  for (const t of todos) {
+    const key = groupBy === "meeting" ? t.meeting : (t.owner || "Ohne Person");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  let html = `<div class="bar"><h1 class="grow">To-dos</h1><div class="tabs" role="tablist">`
+    + `<button role="tab" class="${groupBy === "meeting" ? "on" : ""}" data-action="group" data-by="meeting">Nach Meeting</button>`
+    + `<button role="tab" class="${groupBy === "owner" ? "on" : ""}" data-action="group" data-by="owner">Nach Person</button></div>`
+    + `<label class="meta"><input type="checkbox" data-action="showdone" ${args.open_only === false ? "checked" : ""}> Erledigte zeigen</label></div>`;
+  html += `<p class="meta">${todos.filter(t => !t.done).length} offen</p>`;
+  if (!todos.length) html += `<p class="empty">Keine To-dos.</p>`;
+  html += `<div class="grid">`;
+  for (const [key, items] of groups) {
+    const first = items[0];
+    const head = groupBy === "meeting"
+      ? `<button class="link" data-action="open" data-id="${esc(key)}">${esc(titleOf(key))}</button><span class="meta">${esc(first.date.slice(0, 10))}</span>`
+      : `<span>${esc(key)}</span><span class="meta">${items.length}</span>`;
+    html += `<section class="group"><h3>${head}</h3><ul>`;
+    for (const t of items) {
+      html += `<li class="item todo">${checkbox(t.done, t.meeting, t.text)}<span><span class="${t.done ? "done-text" : ""}">${esc(t.text)}</span>`
+        + `<span class="meta">${groupBy === "meeting" && t.owner ? `<span class="owner">${esc(t.owner)}</span>` : ""}`
+        + `${groupBy === "owner" ? `<button class="link" data-action="open" data-id="${esc(t.meeting)}">${esc(titleOf(t.meeting))}</button>` : ""}`
+        + `${t.due ? `<span>bis ${esc(t.due)}</span>` : ""}</span></span></li>`;
+    }
+    html += `</ul></section>`;
+  }
+  $app.innerHTML = html + `</div>`;
+}
+
+const titleOf = id => { const p = id.split("_"); return p.length >= 3 ? p.slice(2).join("_").replace(/-/g, " ") : "Meeting " + id.slice(0, 10); };
+const reloadTodos = async () => { todos = await call("list_todos", args); renderTodos(); };
+
+// ---------- meeting list ----------
+let meetings = [], query = "";
+
+function renderList() {
+  let html = `<form class="bar" data-action="search"><input class="grow" type="search" aria-label="Meetings durchsuchen" placeholder="Suchen …" value="${esc(query)}">`
+    + `<button class="btn" type="submit">Suchen</button></form><h2>${query ? `Treffer für „${esc(query)}“` : "Meetings"}</h2>`;
+  if (!meetings.length) html += `<p class="empty">Nichts gefunden.</p>`;
+  for (const m of meetings) {
+    const sub = m.hits ? m.hits.slice(0, 2).map(h => `<div class="hits">${inline(h)}</div>`).join("")
+      : `<div class="meta">${m.minutes} min${m.project ? ` · ${esc(m.project)}` : ""}${m.participants?.length ? ` · ${esc(m.participants.join(", "))}` : ""}`
+        + `${m.open_todos ? ` · ${m.open_todos} offene To-dos` : ""}</div>`;
+    html += `<button class="row" data-action="open" data-id="${esc(m.id)}"><span><span class="title">${esc(m.title)}</span>${sub}</span>`
+      + `<span class="meta">${esc(m.date)}</span></button>`;
+  }
+  $app.innerHTML = html;
+}
+
+// ---------- recording ----------
+let rec = null, poll = null;
+
+function renderRecording() {
+  const r = rec;
+  let html;
+  if (!r || r.state === "idle") {
+    html = `<h1>Aufnahme</h1><p class="meta">Mikrofon + Mac-Ton, wird lokal transkribiert.</p>`
+      + `<form class="bar" data-action="start" style="margin-top:12px"><input class="grow" type="text" aria-label="Titel" placeholder="Titel (optional, sonst aus dem Kalender)">`
+      + `<button class="btn primary" type="submit">Aufnahme starten</button></form>`;
+  } else {
+    const live = r.state === "recording";
+    html = `<div class="bar"><span class="${live ? "live-dot" : ""}"></span><h1 class="grow">${esc(r.title)}</h1>`
+      + (live ? `<button class="btn danger" data-action="stop">Stoppen</button>` : "") + `</div>`
+      + `<p class="meta">${live ? `läuft seit ${esc(r.started.slice(11))} · ${r.minutes} min` : "Aufnahme beendet, Sprecher und Zusammenfassung werden berechnet …"}</p>`
+      + `<h2>Live</h2><div class="transcript" id="live">`
+      + (r.utterances.length ? r.utterances.map(u => `<div class="line"><span class="t">${esc(u.t)}</span><span>${esc(u.text)}</span></div>`).join("")
+        : `<p class="empty">Noch nichts erkannt …</p>`) + `</div>`;
+    if (r.notes) html += `<h2>Meine Notizen</h2>${markdown(r.notes, "")}`;
+  }
+  const box = $app.querySelector("#live"), atEnd = !box || box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  $app.innerHTML = html;
+  const nbox = $app.querySelector("#live");
+  if (nbox && atEnd) nbox.scrollTop = nbox.scrollHeight;
+}
+
+async function refreshRecording() {
+  const was = rec?.state;
+  try { rec = await call("live_data"); } catch (e) { return; }
+  if ($app.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // don't wipe a title being typed
+  if (rec.state !== "idle" || was !== "idle") renderRecording();
+}
+
+// ---------- events ----------
+$app.addEventListener("click", e => {
+  const el = e.target.closest("[data-action], .check, .ts");
+  if (!el) return;
+  if (el.classList.contains("ts")) {
+    if (meeting && VIEW !== "recording") jump(el.dataset.ts);
+    return;
+  }
+  if (el.classList.contains("check")) {
+    if (!el.dataset.meeting) return;   // notes of a running meeting
+    return busy(el, async () => {
+      await call("set_todo", { meeting_id: el.dataset.meeting, text: el.dataset.text, done: el.dataset.done !== "true" });
+      if (VIEW === "todos" && !meeting) await reloadTodos(); else await openMeeting(meeting.id, backTo);
+    });
+  }
+  const a = el.dataset.action;
+  if (a === "open") busy(null, () => openMeeting(el.dataset.id, VIEW));
+  else if (a === "back") { meeting = null; VIEW === "todos" ? reloadTodos() : renderList(); }
+  else if (a === "rename") startRename(el);
+  else if (a === "group") { groupBy = el.dataset.by; renderTodos(); }
+  else if (a === "summarize") { el.textContent = "Wird erstellt (etwa eine Minute) …"; busy(el, async () => { await call("summarize", { meeting_id: meeting.id }); await openMeeting(meeting.id, backTo); }); }
+  else if (a === "stop") busy(el, async () => { await call("stop_recording"); await refreshRecording(); });
+});
+$app.addEventListener("change", e => {
+  if (e.target.dataset.action === "showdone") { args = { ...args, open_only: !e.target.checked }; busy(null, reloadTodos); }
+});
+$app.addEventListener("submit", e => {
+  e.preventDefault();
+  const form = e.target, input = form.querySelector("input");
+  if (form.dataset.action === "search") busy(form.querySelector("button"), async () => {
+    query = input.value.trim();
+    meetings = query ? await call("search_meetings", { query }) : await call("list_meetings", {});
+    renderList();
+  });
+  else if (form.dataset.action === "start") busy(form.querySelector("button"), async () => {
+    await call("start_recording", input.value.trim() ? { title: input.value.trim() } : {});
+    input.blur();
+    await refreshRecording();
+  });
+});
+
+// ---------- startup ----------
+handlers["ui/notifications/tool-input"] = p => { args = p.arguments || {}; };
+handlers["ui/notifications/host-context-changed"] = applyContext;
+handlers["ui/notifications/tool-result"] = p => busy(null, async () => {
+  if (p.isError) throw new Error((p.content?.[0]?.text || "Fehler").replace(/^Error executing tool \w+: /, ""));
+  const data = unwrap(p);
+  if (VIEW === "meeting") await openMeeting(args.meeting_id);
+  else if (VIEW === "todos") { todos = data; renderTodos(); }
+  else if (VIEW === "list") { meetings = data; query = args.query || ""; renderList(); }
+  else if (VIEW === "recording") { await refreshRecording(); renderRecording(); poll = poll || setInterval(refreshRecording, 3000); }
+});
+
+request("ui/initialize", { appInfo: { name: "MeetingNotes", version: "1.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" })
+  .then(r => { applyContext(r?.hostContext || {}); send({ method: "ui/notifications/initialized", params: {} }); watchSize(); })
+  .catch(fail);
+</script>
+</body>
+</html>

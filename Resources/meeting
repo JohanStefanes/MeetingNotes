@@ -1,0 +1,103 @@
+#!/bin/zsh
+# Local meeting notes with whisper.cpp (nothing leaves the Mac).
+#   meeting [-l de|en] [-d device] [-m 2nd-device] [name]   record until Ctrl+C, then transcribe
+#   meeting [-l de|en] -s rate [name]                        record stereo float32 from $MEETING_FIFO
+#                                                            (the app writes mic left + Mac system audio right)
+#   meeting [-l ...] file.m4a                                      transcribe an existing recording
+# Devices: ffmpeg -f avfoundation -list_devices true -i ""   (default = system input)
+# Env: MEETING_NOTES (notes file, added to the meeting), MEETING_VOCAB (terms for whisper), MEETING_SUMMARY (summarize.py)
+set -eu
+MODELS=${WHISPER_MODELS:-$HOME/.whisper-models}
+OUT=${MEETING_DIR:-$HOME/Meetings}
+LANGUAGE=de DEV=default MIX="" SYS=""
+while getopts "l:d:m:s:" o; do
+  case $o in l) LANGUAGE=$OPTARG;; d) DEV=$OPTARG;; m) MIX=$OPTARG;; s) SYS=$OPTARG;; *) exit 2;; esac
+done
+shift $((OPTIND-1))
+mkdir -p "$OUT/audio"
+PY=$HOME/.meeting-notes/venv/bin/python
+ENGINE="${0:A:h}/engine.py"   # live, per-utterance German/English + speakers; see engine.py
+USE_ENGINE=0; [[ -x $PY && -f $ENGINE ]] && USE_ENGINE=1
+
+if [[ $# -gt 0 && -f $1 ]]; then
+  AUDIO=$1; BASE=$OUT/${${1:t}:r}
+  TMP=$(mktemp -d); WAV=$TMP/in.wav FULL=$TMP/full.wav
+  ffmpeg -hide_banner -loglevel error -y -i "$AUDIO" -ac 1 -ar 16000 "$WAV"
+  # channels kept for the speaker step: a stereo app recording still tells "Ich" (mic) from the others
+  ffmpeg -hide_banner -loglevel error -y -i "$AUDIO" -ar 16000 -c:a pcm_s16le "$FULL"
+  if (( USE_ENGINE )); then "$PY" -I "$ENGINE" --file "$WAV" --wav "$FULL" --out "$BASE.txt"; fi
+else
+  BASE=$OUT/$(date +%Y-%m-%d_%H%M)${1:+_$1}
+  WAV=$OUT/audio/${BASE:t}.wav; AUDIO=$WAV
+  inputs=(-f avfoundation -i ":$DEV")
+  mix=() wavout=(-ac 1 -ar 16000 "$WAV") pipeout=(-f s16le -ac 1 -ar 16000 pipe:1)
+  if [[ -n $SYS ]]; then
+    # one synchronized stereo stream from the app: wav keeps both channels (speaker labels tell "Ich" from the
+    # others by them), whisper gets the mono mix
+    inputs=(-f f32le -ar "$SYS" -ac 2 -i "${MEETING_FIFO:?}")
+    mix=(-filter_complex "[0:a]aresample=16000,asplit=2[st][m];[m]pan=mono|c0=0.5*c0+0.5*c1[mono]")
+    wavout=(-map "[st]" -c:a pcm_s16le "$WAV") pipeout=(-map "[mono]" -f s16le pipe:1)
+    DEV="Mikrofon + Mac-Ton"
+  elif [[ -n $MIX ]]; then
+    inputs+=(-f avfoundation -i ":$MIX")
+    mix=(-filter_complex "amix=inputs=2:duration=longest")
+  fi
+  echo "🎙  Recording ($DEV${MIX:+ + $MIX}) → $WAV"
+  echo "    Stop with Ctrl+C or q."
+  trap 'true' INT   # handler, not ignore: ffmpeg still gets Ctrl+C and closes the file cleanly
+  if (( USE_ENGINE )); then
+    # one capture, two outputs: the wav file and raw audio for the live engine
+    ffmpeg -hide_banner -loglevel error "${inputs[@]}" "${mix[@]}" "${wavout[@]}" "${pipeout[@]}" \
+      | "$PY" -I "$ENGINE" --out "$BASE.txt" --wav "$WAV" || true
+  else
+    ffmpeg -hide_banner -loglevel error -stats "${inputs[@]}" "${mix[@]}" "${wavout[@]}" || true
+  fi
+  trap - INT
+  [[ -s $WAV ]] || { echo "No audio recorded (microphone permission for the terminal?)"; exit 1; }
+fi
+
+if [[ ! -s $BASE.txt ]]; then   # no engine (or it failed): whole-file pass, one language
+echo "📝 Transcribing ($LANGUAGE)…"
+# -ml 1 -sow: one timestamped word per line, so speaker changes can split mid-sentence
+whisper-cli -m "$MODELS/ggml-large-v3-turbo.bin" -f "$WAV" -l "$LANGUAGE" -t 8 -np -ml 1 -sow \
+  --vad -vm "$MODELS/ggml-silero-v5.1.2.bin" \
+  --prompt "Besprechung auf Deutsch und Englisch, mit Akzenten. Meeting in German and English.${MEETING_VOCAB:+ Begriffe: ${MEETING_VOCAB:0:600}.}" > "$BASE.raw"
+
+# Speaker labels (offline); without the venv/models or on any error, keep the plain transcript.
+PY=$HOME/.meeting-notes/venv/bin/python
+echo "👥 Sprecher erkennen…"
+if ! { [[ -x $PY ]] && "$PY" -I "${0:A:h}/diarize.py" "$WAV" "$BASE.raw" > "$BASE.txt" 2>/dev/null && [[ -s $BASE.txt ]]; }; then
+  # join the words back into sentences, each stamped with its first word's time
+  awk 'match($0, /^\[[0-9:.]+ --> [0-9:.]+\] */) { w = substr($0, RLENGTH + 1); if (w == "") next
+         if (line == "") ts = substr($0, 2, 8); line = line (line == "" ? "" : " ") w
+         if (w ~ /[.!?]$/) { print "[" ts "] " line; line = "" } }
+       END { if (line != "") print "[" ts "] " line }' "$BASE.raw" > "$BASE.txt"
+fi
+rm "$BASE.raw"
+fi
+
+# nothing said (silence, muted or wrong mic): no meeting file, the app shows a message instead.
+# Notes typed during the recording still make it a meeting.
+words=$(sed -E 's/^\[[0-9:]+\] (\*\*[^*]+:\*\* )?//' "$BASE.txt" 2>/dev/null | wc -w | tr -d ' ')
+if (( words < 3 )) && [[ ! -s ${MEETING_NOTES:-} ]]; then
+  rm -f "$BASE.txt"
+  [[ $AUDIO == $OUT/audio/*.wav ]] && rm -f "$WAV"   # only our own recording, never a file passed in
+  echo "🔇 Keine Sprache erkannt"
+  exit 3
+fi
+
+# keep the recording as AAC (~25 MB/h instead of ~115 MB/h of wav); everything that needed the wav is done
+if [[ $AUDIO == $OUT/audio/*.wav && ${MEETING_KEEP_WAV:-0} != 1 ]]; then
+  ffmpeg -hide_banner -loglevel error -y -i "$WAV" -c:a aac -b:a 48k "${WAV:r}.m4a" && rm "$WAV" && AUDIO=${WAV:r}.m4a
+fi
+{ echo "# Meeting ${BASE:t}"; echo; echo "Audio: $AUDIO"; [[ -n ${MEETING_PEOPLE:-} ]] && { echo; echo "Teilnehmer: $MEETING_PEOPLE"; }
+  echo; echo '## Transcript'; echo; sed 's/$/  /' "$BASE.txt"
+  if [[ -s ${MEETING_NOTES:-} ]]; then echo; echo '## Meine Notizen'; echo; cat "$MEETING_NOTES"; fi
+} > "$BASE.md"
+rm "$BASE.txt"
+echo "📄 $BASE.md"
+if [[ -x $PY && ${MEETING_SUMMARY:-ollama} != off ]]; then
+  echo "🧠 Zusammenfassung…"
+  "$PY" -I "${0:A:h}/summarize.py" "$BASE.md" || true   # optional: the meeting is complete without it
+fi
+echo "✅ $BASE.md"

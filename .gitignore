@@ -1,0 +1,8 @@
+.build/
+build/
+__pycache__/
+*.pyc
+.DS_Store
+.swiftpm/
+*.wav
+*.m4a

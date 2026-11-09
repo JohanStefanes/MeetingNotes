@@ -1,0 +1,10 @@
+# Dialog für tests/dialog.sh: DU liest vor, ANNA und EDDY spricht der Mac.
+DU: Hallo zusammen, schön dass ihr Zeit habt. Wollen wir mit dem Stand vom Projekt anfangen?
+ANNA: Gerne. Die neue Version ist seit gestern online, und die ersten Rückmeldungen sind gut.
+EDDY: Bei mir hakt es noch beim Login. Auf dem iPhone kommt manchmal eine leere Seite.
+DU: Das schaue ich mir heute Nachmittag an. Kannst du mir einen Screenshot schicken?
+EDDY: Mache ich, direkt nach dem Meeting.
+ANNA: Und wer übernimmt die Präsentation am Freitag?
+DU: Die mache ich. Anna, schickst du mir bis Donnerstag die neuen Zahlen?
+ANNA: Ja, das klappt.
+DU: Super, dann sind wir für heute durch. Danke euch.
