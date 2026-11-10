@@ -60,6 +60,7 @@ struct NoteView: View {
         .ignoresSafeArea()
         .onAppear { rec.refresh() }
         .onChange(of: rec.state) { _, s in if s == .recording { tab = 1 } }
+        .onChange(of: rec.viewing) { if rec.state == .idle && live.bubbles.isEmpty { tab = 0 } }   // nothing recorded: open on Notizen
     }
 
     // MARK: sidebar
@@ -94,6 +95,14 @@ struct NoteView: View {
             HStack(spacing: 8) {
                 Image(systemName: "waveform").font(.system(size: 16, weight: .bold))
                 Text("MeetingNotes").font(.system(size: 18, weight: .bold)).tracking(-0.3)
+                Spacer()
+                Button { rec.newNote() } label: {
+                    Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .medium))
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .buttonStyle(PressStyle()).foregroundStyle(Theme.muted)
+                .disabled(rec.state != .idle)
+                .help("Neue Notiz (⌘N)").accessibilityLabel("Neue Notiz")
             }
             .padding(.horizontal, 16).padding(.top, 6)
 
@@ -322,7 +331,8 @@ struct NoteView: View {
                         }
                     }
                     if rec.state == .recording && !live.partial.isEmpty {
-                        bubble(live.partial).foregroundStyle(Theme.muted)   // not final yet: whisper may still revise it
+                        bubble(live.partial).foregroundStyle(Theme.muted)
+                            .contentTransition(.interpolate).animation(.easeOut(duration: 0.3), value: live.partial)   // not final yet: whisper may still revise it
                     } else if rec.state == .recording && live.speaking {
                         TypingDots(tint: Theme.accent)
                             .padding(.horizontal, 16).padding(.vertical, 14)

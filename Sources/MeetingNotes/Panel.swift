@@ -205,6 +205,8 @@ struct LiveText: View {
                     Text(text.isEmpty ? "Hört zu …" : text)
                         .foregroundStyle(text.isEmpty ? .tertiary : .primary)
                         .lineSpacing(3)
+                        .contentTransition(.interpolate)   // new words materialize instead of popping in
+                        .animation(.easeOut(duration: 0.3), value: text)
                     Color.clear.frame(height: 1).id("end")
                 }
                 .font(.system(size: 13))

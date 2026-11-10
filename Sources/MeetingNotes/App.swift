@@ -25,6 +25,9 @@ struct MeetingNotesApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Einstellungen …") { SettingsWindow.shared.show() }.keyboardShortcut(",")
             }
+            CommandGroup(replacing: .newItem) {
+                Button("Neue Notiz") { rec.newNote() }.keyboardShortcut("n").disabled(rec.state != .idle)
+            }
         }
     }
 }
@@ -503,6 +506,23 @@ final class Recorder: ObservableObject {
         project = VaultMirror.header("Projekt", in: content) ?? ""
     }
 
+    /// Creates an empty "<date>_Notiz.md" (no recording) and opens it in the main window.
+    func newNote() {
+        guard state == .idle else { return }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd_HHmm"
+        let date = f.string(from: .now)
+        var md = outDir.appendingPathComponent("\(date)_Notiz.md")
+        var n = 2
+        while FileManager.default.fileExists(atPath: md.path) {
+            md = outDir.appendingPathComponent("\(date)_Notiz-\(n).md"); n += 1
+        }
+        try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        guard (try? "# Meeting \(md.deletingPathExtension().lastPathComponent)\n".write(to: md, atomically: true, encoding: .utf8)) != nil
+        else { error = "Notiz konnte nicht angelegt werden."; return }
+        refresh()
+        show(md)
+    }
+
     /// Opens a meeting in the main window (from the panel, the pill or a notification).
     func show(_ md: URL) {
         open(md)
@@ -949,6 +969,7 @@ struct PillView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(.white)
                         .lineLimit(2)
+                        .contentTransition(.interpolate)   // new words materialize instead of popping in
                         .frame(maxWidth: 340, alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -961,7 +982,7 @@ struct PillView: View {
         .frame(width: PillPanel.size.width, height: PillPanel.size.height, alignment: .bottom)
         .animation(.spring(response: 0.4, dampingFraction: 0.82), value: rec.state)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: hover)
-        .animation(.easeOut(duration: 0.2), value: caption)
+        .animation(.easeOut(duration: 0.3), value: caption)
         .animation(.spring(response: 0.4, dampingFraction: 0.82), value: rec.justFinished)
         .environment(\.colorScheme, .dark)
     }
