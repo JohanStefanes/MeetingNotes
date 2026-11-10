@@ -33,6 +33,9 @@ MIN_SPEAKER_SHARE = 0.03  # … and at least this share of all speech; smaller c
 # the 40-min meeting of 2026-11-07: one person split in two ≥ 0.85, different people ≤ 0.69.
 MERGE_SIMILARITY = 0.85   # averaged voices this alike are one person
 SILENT = 0.004            # RMS below this on the system channel = nobody remote is talking
+# Measured 2026-11-10 (DAPP Sync, MacBook mic): room floor 0.0014–0.0025 RMS, speech 0.003–0.015; 0.01 missed most.
+# shortcut: one recording, one mic; re-measure if "Ich" goes missing or room noise becomes "Ich".
+MIC_VOICE = 0.005         # RMS above this on the mic = you are talking (room noise stays below)
 VOICE = os.path.expanduser("~/.meeting-notes/voice.npy")   # your voice (diarize.py --enroll), finds you without stereo
 ME_SIMILARITY = 0.7       # a speaker this close to your voice sample is you (test: you ≥ 0.92, others ≤ 0.57)
 ME_TURN = 0.65            # … and so is any single stretch ≥ 1.5 s (you ≥ 0.75, others ≤ 0.58), even when merged
@@ -179,13 +182,22 @@ def label(segs, wav_path):
     mic = audio[:, 0]
     sys_audio = audio[:, 1] if audio.shape[1] > 1 else None
     people = int(os.environ.get("MEETING_ATTENDEES", "0")) or None   # calendar attendees incl. you, set by the app
-    if sys_audio is None or not remote_active(sys_audio, rate):
-        source = mic if sys_audio is None else audio.mean(axis=1)
-        turns, embed = diarize(source, rate, people)
-        return assign(segs, mark_me(turns, embed))
-    out = assign(segs, diarize(sys_audio, rate, people - 1 if people else None)[0])   # system channel: the others
-    return [(s, ME if rms(sys_audio[int(s * rate):int(e * rate)]) < SILENT else spk, t)
-            for (s, e, t), (_, spk, _) in zip(segs, out)]
+    if sys_audio is not None and remote_active(sys_audio, rate):
+        try:
+            out = assign(segs, diarize(sys_audio, rate, people - 1 if people else None)[0])   # system channel: the others
+            return [(s, side(mic[int(s * rate):int(e * rate)], sys_audio[int(s * rate):int(e * rate)], spk), t)
+                    for (s, e, t), (_, spk, _) in zip(segs, out)]
+        except RuntimeError as e:   # only notification sounds on the Mac (everyone in the room): no speech there
+            print(f"system channel unusable ({str(e)[:80]}), labelling the room mix", file=sys.stderr)
+    source = mic if sys_audio is None else audio.mean(axis=1)
+    turns, embed = diarize(source, rate, people)
+    return assign(segs, mark_me(turns, embed))
+
+
+def side(mic, sys_audio, spk):
+    """ME only when the system channel is quiet and the mic carries a voice. A short sentence tail timed into a
+    pause is quiet on both: it stays with the nearest remote speaker instead of becoming yours."""
+    return ME if rms(sys_audio) < SILENT and rms(mic) >= MIC_VOICE else spk
 
 
 def helper(audio, rate, *args, stdin=None):
@@ -335,6 +347,9 @@ def selftest():
     merged = lambda a, b: fake_embed(a, b)
     assert [s for _, _, s in mark_me([(0, 30, "A"), (30, 60, "A"), (60, 61, "A")], lambda a, b: merged(a, b),
                                      voice=me / np.linalg.norm(me))] == ["A", ME, "A"]
+    loud, quiet = np.full(1600, 0.05, np.float32), np.zeros(1600, np.float32)
+    assert side(loud, quiet, 3) == ME and side(quiet, loud, 3) == 3
+    assert side(quiet, quiet, 3) == 3   # sentence tail in a pause: not yours
     print("diarize selftest ok")
 
 

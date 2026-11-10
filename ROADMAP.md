@@ -1,13 +1,16 @@
 # Roadmap: Richtung Wispr Flow Notetaker
 
-Stand: 2026-11-07. Ziel: so nah wie möglich an Wispr Flows Notetaker, aber alles lokal.
+Stand: 2026-11-10. Ziel: so nah wie möglich an Wispr Flows Notetaker, aber alles lokal.
 
 ## Heute
 
-- Menüleisten-App, ⌃⌥Leertaste global, schwebende Pill mit Live-Untertitel, Notizfenster (Notizen / Transkript), Meeting-Liste.
+- Menüleisten-App, ⌃⌥Leertaste global, schwebende Pill mit Live-Untertitel, Notizfenster (Notizen / Transkript / Zusammenfassung), Meeting-Liste mit Suche und Projekt-Filter.
+- Audio: Mikrofon und Mac-Ton (Process Tap) auf getrennten Kanälen, gespeichert als m4a (~25 MB/h).
 - Engine: Silero VAD → whisper-tiny erkennt DE/EN pro Satz → large-v3-turbo über residenten whisper-server (Metal / Core ML), Aufhol-Bündelung.
-- Sprechererkennung offline nach dem Meeting: `meeting-diarize` (Swift, FluidAudio auf Core ML), ~15 s für 40 min.
-- Ausgabe: Markdown in `~/Meetings` plus WAV, eigene Notizen werden am Ende angehängt.
+- Live-Text Wort für Wort (2026-11-10): whisper-tiny liefert alle ~0,4 s einen grauen Zwischenstand (`partial`), den der fertige Satz ersetzt.
+- Sprechererkennung offline nach dem Meeting: `meeting-diarize` (Swift, FluidAudio auf Core ML), ~15 s für 40 min. „Ich“ über den Mikrofon-Kanal oder die Stimmprobe.
+- Zusammenfassung (`summarize.py`, Ollama oder Claude), Kalender über EventKit, eigenes Wörterbuch, Setup-Check.
+- Ausgabe: Markdown in `~/Meetings`, gespiegelt nach `~/Vault/Meetings`. MCP-Server `mcp_server.py` für Claude (siehe [MCP.md](MCP.md)).
 
 ## Stärken (behalten)
 
@@ -18,18 +21,7 @@ Stand: 2026-11-07. Ziel: so nah wie möglich an Wispr Flows Notetaker, aber alle
 
 ## Lücken
 
-| # | Problem | Folge |
-|---|---|---|
-| 1 | Kein System-Audio, nur avfoundation-Eingänge; „Dazumischen“ braucht BlackHole o. ä. | Teams/Zoom nur mit Bastelei |
-| 2 | Keine Zusammenfassung / Action Items | Wispr-Kernfunktion fehlt |
-| 3 | Notizen nur im RAM bis Meeting-Ende (`appendNotes` in App.swift) | Absturz = Notizen weg |
-| 4 | Vergangene Meetings nur lesbar (Titel, Notizen, Sprecher) | Wispr erlaubt Bearbeiten |
-| 5 | Nur „Sprecher N“, keine Namen | schwer lesbar |
-| 6 | Keine Meeting-Erkennung, kein Kalender | immer manuell starten |
-| 7 | Fester Prompt, kein eigenes Wörterbuch | Namen/Fachbegriffe falsch |
-| 8 | Setup außerhalb des Bundles (venv, Modelle, ffmpeg, whisper-server), stderr verworfen | stille Fehler, nicht verteilbar |
-| 9 | Keine Suche, Ordner, Export/Teilen, Claude-Anbindung | — |
-| 10 | Pegel misst Standardmikrofon statt gewähltem Gerät; WAV ~115 MB/h; `diarize.py --turns` verweist auf nicht mehr vorhandenes `transcribe.py`; nur DE/EN | — |
+Die zehn Lücken vom 2026-11-07 (System-Audio, Zusammenfassung, Notizen nur im RAM, Bearbeiten, Sprechernamen, Kalender, Wörterbuch, Setup, Suche/Claude, Pegel/WAV-Größe) sind alle gelöst, siehe Roadmap-Punkte 1–9. Sprachen: DE/EN, seit 2026-11-10 auch Portugiesisch (brasilianisch, über den Prompt).
 
 ## Roadmap (Wirkung pro Aufwand)
 
@@ -39,7 +31,7 @@ Stand: 2026-11-07. Ziel: so nah wie möglich an Wispr Flows Notetaker, aber alle
 - [x] 4. **Sprecher umbenennen** (2026-11-07: Klick auf Namen; Fragment-Sprecher werden zusammengelegt, 121 → 5 im Testmeeting). Stimmprobe (2026-11-08, Menü „Stimmprobe aufnehmen“) erkennt dich auch ohne Mac-Ton; Teilnehmerzahl aus dem Kalender begrenzt die Sprecher in der UI (Name wird in die Datei übernommen); später eigene Stimmprobe speichern → „Johan“ automatisch.
 - [x] 5. **Kalender über EventKit** (2026-11-07: Titel + Teilnehmer, Hinweis per Pill und Mitteilung). Auto-Stopp 20 s nach Call-Ende (2026-11-08): Titel und Teilnehmer übernehmen; Hinweis „Meeting aufnehmen?“, wenn Zoom/Teams das Mikrofon nutzt.
 - [x] 6. **Eigenes Wörterbuch** (2026-11-07: `~/Meetings/Wörterbuch.txt`, Menü „Wörterbuch bearbeiten“): Begriffsliste + Teilnehmernamen in den whisper-Prompt.
-- [x] 7. **Claude-Anbindung billig** (2026-11-08: `~/Vault/Meetings`, automatisch gespiegelt, Index mit Dataview): Meetings in `~/Vault` schreiben statt eigenem MCP-Server.
+- [x] 7. **Claude-Anbindung billig** (2026-11-08: `~/Vault/Meetings`, automatisch gespiegelt, Index mit Dataview): Meetings in `~/Vault` schreiben. Seit 2026-11-09 zusätzlich eigener MCP-Server `mcp_server.py` (Lesen, Suchen, To-dos, Aufnahme steuern), siehe [MCP.md](MCP.md).
 - [x] 8. **Setup-Check beim Start** (2026-11-08: Warnung im Panel und in der Meeting-Liste, Log in `~/Library/Logs/MeetingNotes.log`): Modelle, ffmpeg, whisper-server prüfen und klar anzeigen, was fehlt; stderr in eine Logdatei.
 - [x] 9. Suche, Ordner, Audio als m4a (2026-11-08: Volltextsuche, „Projekt“ als Ordner/Filter, AAC ~25 MB/h). Pegelanzeige folgt jetzt dem gewählten Mikrofon.
 
@@ -78,6 +70,20 @@ ASR (WER mit `tests/compare.py`, ohne Wörterbuch): whisper large-v3-turbo 12,1 
 - [x] Verwaiste whisper-server (2026-11-09): je ~4 GB, 5 Stück liefen nach abgebrochenen Engine-Läufen weiter (~20 GB). Jetzt startet ein sh-Wächter den Server und beendet ihn, sobald die Engine endet, auch bei SIGKILL. Test: `tests/server_cleanup.py`.
 - [ ] Knopf „Es waren N Leute“ im Notizfenster: `meeting-diarize --speakers N` rechnet in Sekunden neu.
 
+### Nächste Schritte (aus der Analyse eines 46-Min-Meetings, 2026-11-10)
+
+- [x] Kurze Satzenden landeten fälschlich bei „Ich“ (über 30 Stück). Behoben: „Ich“ nur, wenn der Mac-Ton still ist **und** das Mikrofon Stimme hat (`MIC_VOICE` in `diarize.py`).
+- [x] Live-Text Wort für Wort statt ~8–10 s verzögert und satzweise.
+- [x] Audio wurde beim Umwandeln nach m4a nach ~1–1,5 min abgeschnitten und die WAV gelöscht (Meeting 2026-11-09_1832: nur 65 s von 47 min). Ursache: das Stopp-„q“ der App blieb in stdin liegen und beendete das Umwandlungs-ffmpeg. Fix 2026-11-10: `-nostdin`, WAV wird nur gelöscht, wenn die m4a gleich lang ist.
+- [ ] Ton beginnt teils Minuten nach dem Start der Aufnahme (DAPP Sync 2026-11-10: ~5½ min). Vermutlich neue Mac-Ton-Freigabe nach einem Neubau; prüfen.
+- [ ] Beides in einem echten Meeting prüfen. `MIC_VOICE` (0,01) ist geschätzt; mit `MEETING_KEEP_WAV=1` am eigenen Mikrofon messen.
+- [ ] Sprecherwechsel: Ganze Sätze landen am Wechsel beim falschen Sprecher (z. B. 18:51, 31:25, 42:54). Satz am Wechsel nach Zeitanteil aufteilen oder neu zuordnen.
+- [x] Schweizerdeutsch wird als Englisch erkannt und ergibt Unsinn. Seit 2026-11-10: Ein englisches Ergebnis mit schwacher Sicherheit (`LANG_DOUBT`, avg_logprob < -0,5; gilt auch für Portugiesisch) wird zusätzlich als Deutsch transkribiert, das wahrscheinlichere gewinnt. Schwelle geschätzt, an echter Aufnahme prüfen.
+- [x] Erfundene Sätze filtern (z. B. „Wir sehen uns im Video“): Sperrliste `PHANTOM` in `engine.py` (2026-11-10). Offen: Pegel-Abgleich für Floskeln, die nicht auf der Liste stehen.
+- [x] Wörterbuch ergänzt (2026-11-10): Vercel, Simli, Four-Part Sketch, Issue-Liste, Feature, Go/No-Go u. a.
+- [ ] Zusammenfassung: Es gab ein falsches To-do, und Kernpunkte fehlten (Deadlines, Go/No-Go). Prompt schärfen und Fristen ausdrücklich abfragen.
+- [ ] Optional: Zwischenstand aus dem Live-Text auch in der schwebenden Pill zeigen.
+
 ## Vision: Meeting → Board → Workflow
 
 Irgendwann: Ein Meeting wird transkribiert, daraus entstehen automatisch Ideen, Issues, Entscheidungen und To-dos. Alles landet zuerst als Sticky Notes auf einem Board (Spalten wie bei einem Business Model Canvas, aber mit Meeting-Inhalt). Dort prüft und verschiebt man die Notes und schickt sie erst dann weiter.
@@ -107,7 +113,7 @@ Faustregel: **Rechnen auf dem Mac, Dauerbetrieb und Ablage auf jks.**
 - **Workflow-Runner**: Der Mac schickt nach dem Meeting das Extraktions-JSON an jks. Nach Freigabe erstellt jks Issues (GitHub / Linear) und To-dos, auch wenn der Mac zu ist.
 - **Vault**: synchronisiert schon mit jks. Meeting-Notizen in `~/Vault` sind damit automatisch überall verfügbar.
 - **Telegram**: Alerts laufen auf jks schon. Erweitern zu „Meeting fertig, 5 Items zur Freigabe“, Freigabe direkt im Chat.
-- **Audio-Archiv**: alte Aufnahmen auf jks auslagern (WAV ~115 MB/h).
+- **Audio-Archiv**: alte Aufnahmen auf jks auslagern (m4a ~25 MB/h).
 
 Zu beachten: Sobald Audio oder Transkripte auf jks liegen, gilt „alles bleibt auf deinem Mac“ nicht mehr, sondern „alles bleibt bei dir“. Ohne Off-site-Backup ist jks dann die einzige Kopie dieser Daten.
 

@@ -4,7 +4,7 @@
     python engine.py --file audio.wav --out transcript.txt
     python engine.py --selftest
 
-Per utterance (split at pauses by silero VAD): whisper-tiny picks German or English (~90 ms, CPU) and
+Per utterance (split at pauses by silero VAD): whisper-tiny picks German, English or Portuguese (~90 ms, CPU) and
 large-v3-turbo transcribes it in that language via a resident whisper-server (GPU). After the recording, the text is
 written at once; then offline diarization (diarize.py, 4/4 on a real test file) labels speakers per sentence.
 Why per utterance: whisper forced to one language translates the other one. When transcription falls behind,
@@ -12,12 +12,14 @@ waiting utterances of one language are packed into one request (one 30 s encoder
 
 stdout, one JSON object per line, for the app:
   {"t":"ready"} · {"t":"stopped"} · {"t":"speaking","on":bool} · {"t":"utt","id":n,"start":s,"end":e,"lang":"de","text":"…"}
+  {"t":"partial","start":s,"text":"…"} (the sentence still being spoken, revised every ~0.6 s; the next utt replaces it)
   {"t":"text","out":path} (transcript written, no speakers yet) · {"t":"done","out":path} (with speakers)
 """
 import io
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import sys
@@ -40,12 +42,25 @@ COREML_SERVER = os.path.expanduser("~/.meeting-notes/src/whisper.cpp/build/bin/w
 COREML_ENCODER = f"{WHISPER_MODELS}/ggml-large-v3-turbo-encoder.mlmodelc"
 SERVER = os.environ.get("MEETING_WHISPER_SERVER") or (
     COREML_SERVER if os.path.exists(COREML_SERVER) and os.path.isdir(COREML_ENCODER) else "/opt/homebrew/bin/whisper-server")
+PARTIAL_EVERY = 0.4      # s between live re-transcriptions of the sentence still being spoken
 PACK_MAX = 28.0          # s of speech per whisper request (its window is 30 s)
 # Own vocabulary (dictionary file + calendar attendees, set by the app) steers whisper's spelling of names and jargon.
 # shortcut: whisper's prompt holds ~224 tokens, so the list is cut at 600 chars; enough for a few dozen terms.
 VOCAB = os.environ.get("MEETING_VOCAB", "").strip()[:600]
-PROMPT = {"de": "Besprechung auf Deutsch." + (f" Begriffe: {VOCAB}." if VOCAB else ""),
-          "en": "A meeting in English." + (f" Terms: {VOCAB}." if VOCAB else "")}
+# A plain sentence, no "Begriffe:" label: whisper copied that label into the transcript ("Begriff: Okay, gut.").
+PROMPT = {"de": "Besprechung auf Deutsch" + (f" über {VOCAB}." if VOCAB else "."),
+          "en": "A meeting in English" + (f" about {VOCAB}." if VOCAB else "."),
+          # whisper has one "pt"; a Brazilian prompt steers it to Brazilian spelling (você, ônibus, fato)
+          "pt": "Reunião em português do Brasil, você está ótimo" + (f", sobre {VOCAB}." if VOCAB else ".")}
+# Sentences whisper invents from YouTube subtitles in quiet or unclear audio; dropped wherever they appear.
+PHANTOM = re.compile(r"wir sehen uns im (nächsten )?video|untertitel (im auftrag|von|der amara)|danke fürs zuschauen"
+                     r"|vielen dank fürs zuschauen|abonnier|thanks? (you )?for watching|subscribe to", re.I)
+# Swiss German sometimes passes whisper-tiny as English (or Portuguese) and comes back as gibberish. When a
+# non-German result scores below this, the audio is transcribed again as German and the likelier text wins.
+# English gets a much lower bar: accented English in a room mic scores around -0.5 too, and forced to German whisper
+# translates it ("Wir haben die Möglichkeit, …" in the middle of an English talk). Only gibberish is redone.
+# shortcut: guessed from typical whisper avg_logprob (clean ≈ -0.3), not measured on Swiss German; tune with real audio.
+LANG_DOUBT = {"en": -1.0, "pt": -0.5}
 
 
 def emit(**msg):
@@ -93,7 +108,7 @@ class Whisper:
         raise RuntimeError("whisper-server did not start")
 
     def transcribe(self, samples, language):
-        """Returns verbose_json segments [(start, end, text)] relative to the samples."""
+        """Returns (segments [(start, end, text)] relative to the samples, mean avg_logprob)."""
         boundary = uuid.uuid4().hex
         fields = {"language": language, "response_format": "verbose_json", "temperature": "0.0",
                   "prompt": PROMPT.get(language, "")}
@@ -105,7 +120,9 @@ class Whisper:
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/inference", data=body,
                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         data = json.loads(urllib.request.urlopen(req, timeout=600).read())
-        return glue([(s["start"], s["end"], s.get("text", "")) for s in data.get("segments", [])])
+        segs = data.get("segments", [])
+        score = sum(s.get("avg_logprob", 0.0) for s in segs) / len(segs) if segs else 0.0
+        return scrub(glue([(s["start"], s["end"], s.get("text", "")) for s in segs]), language), score
 
     def close(self):
         self.proc.stdin.close()   # EOF → the guard kills the server
@@ -127,6 +144,27 @@ def glue(segments):
             out[-1] = (ps, e, pt + t.strip())
         else:
             out.append((s, e, t.strip()))
+    return out
+
+
+# Leftovers of the old prompt label and whisper's sound notes ("*ding*", "*sad*").
+NOISE = re.compile(r"\b(Begriff(e|en)?|Terms?|Termos?):\s*|\*[^*]{1,30}\*\s*")
+
+
+# English stock phrases whisper adds to German or Portuguese speech ("Thank you." at the end of a sentence).
+STOCK_EN = re.compile(r"^(thank you( very much| so much)?|thanks|see you( later)?|bye( bye)?|you)[.!]?$", re.I)
+
+
+def scrub(segments, language="de"):
+    """Drop invented subtitle sentences (PHANTOM), prompt/sound noise and, outside English, lone English stock
+    phrases; a segment left empty disappears."""
+    out = []
+    for s, e, t in segments:
+        t = NOISE.sub("", t).strip()
+        keep = [x for x in re.split(r"(?<=[.!?])\s+", t)
+                if x and not PHANTOM.search(x) and not (language != "en" and STOCK_EN.match(x))]
+        if keep:
+            out.append((s, e, " ".join(keep)))
     return out
 
 
@@ -179,11 +217,14 @@ class Engine:
         self.length = 0
         self.lock = threading.Lock()
         self.speaking = False
+        self.speech_from = 0     # sample where the sentence being spoken began (for partials)
+        self.lang = "de"         # language of the latest sentence, a good guess for the current one
         self.whisper = None
         self.ready = threading.Event()
         threading.Thread(target=self._start_whisper, daemon=True).start()
         self.worker = threading.Thread(target=self._work, daemon=True)
         self.worker.start()
+        threading.Thread(target=self._partials, daemon=True).start()
 
     def _start_whisper(self):
         self.whisper = Whisper()   # ~3 s model load overlaps with the first words being spoken
@@ -193,7 +234,8 @@ class Engine:
     def language(self, samples):
         s = self.lid.create_stream()
         s.accept_waveform(RATE, samples[: RATE * 8])
-        return "en" if self.lid.compute(s) == "en" else "de"   # only German or English
+        lang = self.lid.compute(s)
+        return lang if lang in PROMPT else "de"   # only the languages in PROMPT; anything else is most likely German
 
     def feed(self, samples):
         if self.length + len(samples) > len(self.audio):
@@ -205,6 +247,8 @@ class Engine:
         on = self.vad.is_speech_detected()
         if on != self.speaking:
             self.speaking = on
+            if on:   # VAD fires ~0.5 s into speech
+                self.speech_from = max(0, self.length - int(RATE * 0.8))
             emit(t="speaking", on=on)
         self._drain_vad()
 
@@ -219,8 +263,9 @@ class Engine:
             if len(samples) < RATE * 0.5:
                 continue
             self.count += 1
+            self.lang = self.language(samples)
             self.pending.put({"id": self.count, "start": start, "end": start + len(samples) / RATE,
-                              "lang": self.language(samples), "samples": samples})
+                              "lang": self.lang, "samples": samples})
 
     def _work(self):
         backlog = []
@@ -247,7 +292,15 @@ class Engine:
                 audio += [it["samples"], gap]
                 t += d + 0.3
             try:
-                parts = split_segments(self.whisper.transcribe(np.concatenate(audio), batch[0]["lang"]), spans)
+                wav, lang = np.concatenate(audio), batch[0]["lang"]
+                segs, score = self.whisper.transcribe(wav, lang)
+                if score < LANG_DOUBT.get(lang, -9.0):   # German is never redone
+                    de_segs, de_score = self.whisper.transcribe(wav, "de")
+                    if de_score > score:
+                        segs = de_segs
+                        for it in batch:
+                            it["lang"] = "de"
+                parts = split_segments(segs, spans)
             except Exception as e:  # keep going; one lost utterance beats a dead engine
                 parts = [[] for _ in batch]
                 print(f"whisper error: {e}", file=sys.stderr)
@@ -260,8 +313,30 @@ class Engine:
                 if text:
                     emit(t="utt", **u)
 
+    def _partials(self):
+        """While someone speaks, re-transcribe their sentence so far with whisper-tiny (CPU, 0.1-0.8 s, leaves the
+        GPU to the final pass) and send it as a partial; the large model's utt replaces it moments later."""
+        import sherpa_onnx as so
+        tiny, models = f"{MODELS}/sherpa-onnx-whisper-tiny", {}
+        while True:
+            time.sleep(PARTIAL_EVERY)
+            a, b, lang = self.speech_from, self.length, self.lang
+            if not self.speaking or b - a < RATE * 0.7:   # shorter: tiny tends to invent words
+                continue
+            if lang not in models:
+                models[lang] = so.OfflineRecognizer.from_whisper(
+                    encoder=f"{tiny}/tiny-encoder.int8.onnx", decoder=f"{tiny}/tiny-decoder.int8.onnx",
+                    tokens=f"{tiny}/tiny-tokens.txt", language=lang, task="transcribe", num_threads=2)
+            stream = models[lang].create_stream()
+            stream.accept_waveform(RATE, self.audio[max(a, b - RATE * 28):b].copy())   # whisper's window is 30 s
+            models[lang].decode_stream(stream)
+            text = stream.result.text.strip()
+            if text and self.speaking and self.speech_from == a:   # still the same sentence
+                emit(t="partial", start=a / RATE, text=text)
+
     def finish(self, out_path, wav_path):
         emit(t="stopped")
+        self.speaking = False   # stops partials before whisper closes
         self.vad.flush()
         self._drain_vad()
         if self.speaking:
@@ -295,6 +370,11 @@ def selftest():
         [(0, 2, "Aus dem Pilotprojekt."), (2, 3, "Gut.")]
     assert split_segments([(0, 2, "Hallo"), (5.5, 7, "Welt"), (7.1, 8, "!")], [(0, 5), (5.3, 9)]) == \
         [[(0, 2, "Hallo")], [(0.2, 1.7, "Welt"), (1.8, 2.7, "!")]]
+    assert scrub([(0, 2, "Gut. Wir sehen uns im Video. Tschüss!"), (2, 3, "Thanks for watching!")]) == \
+        [(0, 2, "Gut. Tschüss!")]
+    assert scrub([(0, 1, "Begriff: Okay, gut. *ding* Ja."), (1, 2, "*sad*")]) == [(0, 1, "Okay, gut. Ja.")]
+    assert scrub([(0, 1, "Ich bin Stress. Thank you. Vielen Dank.")]) == [(0, 1, "Ich bin Stress. Vielen Dank.")]
+    assert scrub([(0, 1, "Thank you.")], "en") == [(0, 1, "Thank you.")]
     print("engine selftest ok")
 
 

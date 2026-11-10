@@ -1,10 +1,10 @@
 # MeetingNotes
 
-Eine macOS-Menüleisten-App, die Meetings mitschreibt, ohne dass Audio den Mac verlässt. Sie transkribiert live auf Deutsch und Englisch, erkennt die Sprecher und erstellt danach eine Zusammenfassung mit Entscheidungen und To-dos.
+Eine macOS-Menüleisten-App, die Meetings mitschreibt, ohne dass Audio den Mac verlässt. Sie transkribiert live auf Deutsch, Englisch und Portugiesisch, erkennt die Sprecher und erstellt danach eine Zusammenfassung mit Entscheidungen und To-dos.
 
 ## Funktionen
 
-- **Live-Transkript**: Silero VAD teilt das Gesagte in Sätze. whisper-tiny erkennt pro Satz die Sprache (DE/EN), large-v3-turbo transkribiert über einen lokalen `whisper-server` (Metal / Core ML). Weil die Sprache pro Satz bestimmt wird, übersetzt Whisper die zweite Sprache nicht.
+- **Live-Transkript**: Silero VAD teilt das Gesagte in Sätze. whisper-tiny erkennt pro Satz die Sprache (DE/EN/PT), large-v3-turbo transkribiert über einen lokalen `whisper-server` (Metal / Core ML). Weil die Sprache pro Satz bestimmt wird, übersetzt Whisper die zweite Sprache nicht.
 - **Mikrofon und Mac-Ton**: Core Audio Process Taps (macOS 14.2+) nehmen Zoom, Teams usw. ohne BlackHole auf. Mikrofon links und System rechts ergibt „Ich“ gegenüber den anderen ohne Zusatzaufwand.
 - **Sprechererkennung** nach dem Meeting mit [FluidAudio](https://github.com/FluidInference/FluidAudio) auf Core ML (40 min Audio in ~15 s). Sprecher lassen sich umbenennen. Eine Stimmprobe erkennt dich auch ohne Mac-Ton.
 - **Zusammenfassung**: Entscheidungen, To-dos mit Verantwortlichen, offene Punkte. Lokal über Ollama (Standard) oder über die Claude-API.

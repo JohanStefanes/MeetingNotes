@@ -119,7 +119,7 @@ enum SetupCheck {
         } else if !any(["~/.meeting-notes/venv/lib/python3.11/site-packages/mcp", "~/.meeting-notes/venv/lib/python3.12/site-packages/mcp"]) {
             out.append("MCP für Claude fehlt: ~/.meeting-notes/venv/bin/pip install mcp")
         }
-        for (file, what) in [("silero_vad.onnx", "Satzerkennung"), ("sherpa-onnx-whisper-tiny", "Spracherkennung DE/EN")]
+        for (file, what) in [("silero_vad.onnx", "Satzerkennung"), ("sherpa-onnx-whisper-tiny", "Spracherkennung DE/EN/PT")]
         where !exists("~/.meeting-notes/models/\(file)") {
             out.append("Modell für \(what) fehlt: ~/.meeting-notes/models/\(file)")
         }

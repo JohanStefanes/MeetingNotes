@@ -121,7 +121,9 @@ const unwrap = r => {
   return sc ?? r?.content?.[0]?.text;
 };
 async function call(name, args = {}) {
-  const r = await request("tools/call", { name, arguments: args });
+  let r;
+  try { r = await request("tools/call", { name, arguments: args }); }
+  catch (e) { throw new Error(`Das geht in diesem Claude-Fenster nicht direkt im Widget (${e.message}). Sag Claude im Chat, was du ändern willst.`); }
   if (r.isError) throw new Error((r.content?.[0]?.text || "Fehler").replace(/^Error executing tool \w+: /, ""));
   return unwrap(r);
 }
@@ -131,7 +133,10 @@ function applyContext(ctx) {
 function watchSize() {
   let last = 0;
   const report = () => {
-    const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    const root = document.documentElement, was = root.style.height;
+    root.style.height = "max-content";   // measure the content, not the iframe the host gave us
+    const h = Math.ceil(root.getBoundingClientRect().height);
+    root.style.height = was;
     if (h !== last) { last = h; send({ method: "ui/notifications/size-changed", params: { width: Math.ceil(window.innerWidth), height: h } }); }
   };
   new ResizeObserver(report).observe(document.body);
@@ -189,7 +194,7 @@ async function openMeeting(id, from) {
 function renderMeeting(jumpTo) {
   const m = meeting, colors = {};
   let html = backTo ? `<button class="btn back" data-action="back">← Zurück</button>` : "";
-  html += `<h1>${esc(m.title)}</h1><div class="meta"><span>${esc(m.date)}</span><span>${m.minutes} min</span>`
+  html += `<h1>${esc(m.title)}</h1><div class="meta"><span>${esc(m.date)}</span><span>${m.minutes || "<1"} min</span>`
     + (m.project ? `<span class="chip">${esc(m.project)}</span>` : "")
     + (m.participants.length ? `<span>${esc(m.participants.join(", "))}</span>` : "") + `</div>`;
   html += `<h2>Zusammenfassung</h2>` + (m.summary ? markdown(m.summary, m.id) : `<p class="empty">Noch keine Zusammenfassung.</p>
@@ -287,7 +292,7 @@ function renderList() {
   if (!meetings.length) html += `<p class="empty">Nichts gefunden.</p>`;
   for (const m of meetings) {
     const sub = m.hits ? m.hits.slice(0, 2).map(h => `<div class="hits">${inline(h)}</div>`).join("")
-      : `<div class="meta">${m.minutes} min${m.project ? ` · ${esc(m.project)}` : ""}${m.participants?.length ? ` · ${esc(m.participants.join(", "))}` : ""}`
+      : `<div class="meta">${m.minutes || "<1"} min${m.project ? ` · ${esc(m.project)}` : ""}${m.participants?.length ? ` · ${esc(m.participants.join(", "))}` : ""}`
         + `${m.open_todos ? ` · ${m.open_todos} offene To-dos` : ""}</div>`;
     html += `<button class="row" data-action="open" data-id="${esc(m.id)}"><span><span class="title">${esc(m.title)}</span>${sub}</span>`
       + `<span class="meta">${esc(m.date)}</span></button>`;
@@ -375,10 +380,14 @@ handlers["ui/notifications/host-context-changed"] = applyContext;
 handlers["ui/notifications/tool-result"] = p => busy(null, async () => {
   if (p.isError) throw new Error((p.content?.[0]?.text || "Fehler").replace(/^Error executing tool \w+: /, ""));
   const data = unwrap(p);
-  if (VIEW === "meeting") await openMeeting(args.meeting_id);
+  if (VIEW === "meeting") { if (data?.transcript) { meeting = data; renderMeeting(); } else await openMeeting(args.meeting_id); }
   else if (VIEW === "todos") { todos = data; renderTodos(); }
   else if (VIEW === "list") { meetings = data; query = args.query || ""; renderList(); }
-  else if (VIEW === "recording") { await refreshRecording(); renderRecording(); poll = poll || setInterval(refreshRecording, 3000); }
+  else if (VIEW === "recording") {
+    if (data?.state) rec = data; else await refreshRecording();
+    renderRecording();
+    poll = poll || setInterval(refreshRecording, 3000);   // hosts without tool relay: stays as it was
+  }
 });
 
 request("ui/initialize", { appInfo: { name: "MeetingNotes", version: "1.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" })

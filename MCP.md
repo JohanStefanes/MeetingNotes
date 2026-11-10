@@ -76,7 +76,7 @@ Alle Schreibvorgänge: lesen → ändern → atomar schreiben (Temp-Datei + `os.
 1. [x] Lesen + Registrierung (2026-11-09: 4 Tools, Selftest, in Claude Code und Claude Desktop eingetragen)
 2. [x] Bearbeiten + Ordner-Beobachtung in der App (2026-11-09: update_meeting, rename_speaker, set_todo, summarize; App folgt Umbenennungen und spiegelt Änderungen in den Vault)
 3. [x] URL-Schema + `.live.json` (2026-11-09: recording_status, start/stop_recording, live_transcript; URL-Befehle brauchen das Token aus `~/.meeting-notes/control-token`)
-4. Widgets (MCP Apps)
+4. [x] Widgets (MCP Apps) (2026-11-09: `Resources/widget.html`, 4 Ansichten, im Test-Host geprüft; in Claude Desktop noch zu bestätigen)
 
 ## Phase 4: Widgets in Claude Desktop (MCP Apps)
 
@@ -91,7 +91,7 @@ MCP Apps (`io.modelcontextprotocol/ui`): Ein Tool verweist mit `_meta.ui.resourc
 
 - Ein HTML-Bundle für alle vier (eine Datei im Bundle, `ui://meetingnotes/app.html`), wählt die Ansicht nach dem Tool. Daten kommen nur aus Tool-Ergebnissen, kein Netzwerk; Klicks rufen über die Host-Brücke die Tools aus Phase 2/3 auf.
 - Aussehen wie die App: Farben und Sprecherfarben aus `Design.swift` (`Theme`, `SpeakerColor`), Hell und Dunkel.
-- Vorher prüfen: welche Bridge-Version Claude Desktop spricht (offizielles `@modelcontextprotocol/ext-apps` per CDN mit `csp.resourceDomains` oder eigene postMessage-Implementierung).
+- Brücke: eigene kleine JSON-RPC-Implementierung (Protokoll 2026-01-26 aus `@modelcontextprotocol/ext-apps` 2.0.4), statt 540 KB Bibliothek einzubetten. Widget-Tools brauchen genaue Rückgabetypen (`dict[str, Any]`), sonst fehlt `structuredContent`.
 
 ## Nicht in diesem Plan
 

@@ -12,8 +12,31 @@ final class MeetingContext {
     let vocabularyFile = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Meetings/Wörterbuch.txt")
 
-    func requestCalendar() {
-        store.requestFullAccessToEvents { ok, _ in self.calendarAllowed = ok }
+    func requestCalendar(_ done: ((Bool) -> Void)? = nil) {
+        store.requestFullAccessToEvents { ok, _ in
+            self.calendarAllowed = ok
+            DispatchQueue.main.async { done?(ok) }
+        }
+    }
+
+    var calendarConnected: Bool { EKEventStore.authorizationStatus(for: .event) == .fullAccess }
+
+    /// Calendar → Privacy pane, for when access was denied once (macOS won't ask again).
+    func openCalendarPrivacy() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
+    }
+
+    private var announced = Set<String>()
+
+    /// An event with other people that began in the last 2 minutes (or begins within 1), each occurrence only once.
+    /// Solo blocks ("Fokuszeit") and declined invites are skipped.
+    func startingEvent(at now: Date = Date()) -> EKEvent? {
+        guard let e = currentEvent(at: now), let people = e.attendees, !people.isEmpty,
+              people.first(where: \.isCurrentUser)?.participantStatus != .declined,
+              e.startDate <= now.addingTimeInterval(60), e.startDate > now.addingTimeInterval(-120),
+              announced.insert("\(e.calendarItemIdentifier)@\(e.startDate.timeIntervalSince1970)").inserted
+        else { return nil }
+        return e
     }
 
     /// The event running now (started up to 15 min ago or starting within 10 min), preferring the one closest to now.
@@ -26,8 +49,16 @@ final class MeetingContext {
             .min { abs($0.startDate.timeIntervalSince(now)) < abs($1.startDate.timeIntervalSince(now)) }
     }
 
+    /// Other people invited: no rooms, resources or mailing lists, and not you (you join as the "me" speaker).
+    static func others(_ event: EKEvent?) -> [EKParticipant] {
+        (event?.attendees ?? []).filter { p in
+            ![.room, .resource, .group].contains(p.participantType) && !p.isCurrentUser
+                && !(p.name ?? "").contains("@")   // shared mailboxes come as persons named "Shared Mailbox x@y.ch"
+        }
+    }
+
     static func attendeeNames(_ event: EKEvent?) -> [String] {
-        (event?.attendees ?? []).compactMap { p in
+        others(event).compactMap { p in
             // name, or the readable part of the address ("anna.muster@x.ch" → "anna muster")
             p.name ?? p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
                 .split(separator: "@").first.map { $0.replacingOccurrences(of: ".", with: " ") }
@@ -36,8 +67,8 @@ final class MeetingContext {
 
     /// People in the meeting including you, from the invite; nil without attendees (then nothing is capped).
     static func headcount(_ event: EKEvent?) -> Int? {
-        guard let people = event?.attendees, !people.isEmpty else { return nil }
-        return people.count + (people.contains(where: \.isCurrentUser) ? 0 : 1)
+        guard event?.attendees?.isEmpty == false else { return nil }
+        return others(event).count + 1
     }
 
     func vocabulary() -> [String] {
@@ -53,10 +84,15 @@ final class MeetingContext {
             .filter { !$0.isEmpty }
     }
 
-    /// whisper prompt terms: own vocabulary first, then attendees, without duplicates.
+    /// Above this many attendees their names stay out of the whisper prompt: a long name list makes whisper invent
+    /// subtitle credits ("Daniel Sutton, Ph.D.:") and crowds out the own vocabulary.
+    static let promptAttendeeLimit = 12
+
+    /// whisper prompt terms: own vocabulary first, then attendees (small meetings only), without duplicates.
     static func vocab(own: [String], attendees: [String]) -> String {
         var seen = Set<String>()
-        return (own + attendees).filter { seen.insert($0.lowercased()).inserted }.joined(separator: ", ")
+        let people = attendees.count <= promptAttendeeLimit ? attendees : []
+        return (own + people).filter { seen.insert($0.lowercased()).inserted }.joined(separator: ", ")
     }
 
     func openVocabulary() {

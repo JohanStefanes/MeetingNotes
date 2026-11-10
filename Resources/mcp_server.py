@@ -15,6 +15,7 @@ import sys
 import time
 import urllib.parse
 from datetime import datetime, timezone
+from typing import Any
 
 try:   # the model only sees the message of a ToolError; any other exception becomes a bare "Error executing tool"
     from mcp.server.mcpserver.exceptions import ToolError as Problem
@@ -148,7 +149,7 @@ def resolve(meeting_id):
 
 # ---------- tools ----------
 
-def list_meetings(since: str = "", until: str = "", project: str = "", participant: str = "", limit: int = 20) -> list:
+def list_meetings(since: str = "", until: str = "", project: str = "", participant: str = "", limit: int = 20) -> list[dict[str, Any]]:
     """Meetings, neueste zuerst. Filter: since/until als YYYY-MM-DD, project (exakt, wie der Ordner in der App),
     participant (Teil eines Namens). Liefert id, Titel, Datum, Dauer, Projekt, Teilnehmer, ob es eine
     Zusammenfassung gibt, und die Zahl offener To-dos."""
@@ -161,7 +162,7 @@ def list_meetings(since: str = "", until: str = "", project: str = "", participa
 
 
 def search_meetings(query: str, since: str = "", until: str = "", project: str = "", participant: str = "",
-                    limit: int = 20) -> list:
+                    limit: int = 20) -> list[dict[str, Any]]:
     """Volltextsuche über Titel, Transkript, Notizen und Zusammenfassung. Alle Wörter müssen im Meeting vorkommen
     (wie das Suchfeld der App), Groß-/Kleinschreibung egal. Das Transkript ist automatisch erkannt und enthält
     Hörfehler: bei wenigen Treffern Synonyme oder Wortteile probieren. Liefert pro Meeting bis zu 5 passende Zeilen."""
@@ -202,7 +203,7 @@ def get_meeting(meeting_id: str, parts: list[str] = ["summary", "notes", "transc
     return "\n".join(out) + "\n"
 
 
-def list_todos(open_only: bool = True, owner: str = "", project: str = "", since: str = "") -> list:
+def list_todos(open_only: bool = True, owner: str = "", project: str = "", since: str = "") -> list[dict[str, Any]]:
     """To-dos über alle Meetings, neueste Meetings zuerst: aus den Zusammenfassungen und aus abhakbaren Zeilen
     in den eigenen Notizen. owner: Teil eines Namens (oder "Sprecher 2"). at: Zeitstempel im Transkript, um mit
     get_meeting(start=at) nachzulesen, was genau gesagt wurde."""
@@ -269,7 +270,7 @@ def rename(stem, new_title):
 
 
 def update_meeting(meeting_id: str, title: str = "", project: str | None = None, notes: str | None = None,
-                   append_notes: str = "") -> dict:
+                   append_notes: str = "") -> dict[str, Any]:
     """Ändert ein Meeting; nicht angegebene Felder bleiben. title: neuer Titel (benennt die Datei um, die id ändert
     sich). project: Projekt/Ordner, "" entfernt es. notes: ersetzt "Meine Notizen" ganz; append_notes: hängt einen
     Absatz an (vorzuziehen, damit nichts verloren geht). Liefert das Meeting mit der neuen id."""
@@ -288,7 +289,7 @@ def update_meeting(meeting_id: str, title: str = "", project: str | None = None,
     return info(stem, read(stem))
 
 
-def rename_speaker(meeting_id: str, old: str, new: str) -> dict:
+def rename_speaker(meeting_id: str, old: str, new: str) -> dict[str, Any]:
     """Benennt einen Sprecher im ganzen Meeting um (Transkript und Verantwortliche der To-dos), z. B.
     "Sprecher 2" → "Anna". Wie der Klick auf den Namen in der App. Vorher im Transkript prüfen, wer es ist."""
     stem = resolve(meeting_id)
@@ -310,7 +311,7 @@ def rename_speaker(meeting_id: str, old: str, new: str) -> dict:
     return info(stem, read(stem))
 
 
-def set_todo(meeting_id: str, text: str, done: bool = True) -> dict:
+def set_todo(meeting_id: str, text: str, done: bool = True) -> dict[str, Any]:
     """Hakt ein To-do ab (done=true) oder wieder auf (done=false). text: der To-do-Text oder ein eindeutiger Teil
     davon, wie ihn list_todos liefert."""
     stem = resolve(meeting_id)
@@ -405,13 +406,13 @@ def status_of(data):
             "sentences": len(data.get("utterances", []))}
 
 
-def recording_status() -> dict:
+def recording_status() -> dict[str, Any]:
     """Läuft gerade eine Aufnahme? state: "idle", "recording" oder "transcribing" (Aufnahme gestoppt, Sprecher und
     Zusammenfassung werden berechnet), dazu Titel, Startzeit, Dauer und Zahl der erkannten Sätze."""
     return status_of(live())
 
 
-def start_recording(title: str = "") -> dict:
+def start_recording(title: str = "") -> dict[str, Any]:
     """Startet eine Aufnahme in MeetingNotes (Mikrofon + Mac-Ton), wie ⌃⌥Leertaste. Nur auf ausdrücklichen Wunsch
     von Johan. title: optional; ohne Titel nimmt die App den laufenden Kalendertermin. Die App startet bei Bedarf."""
     if live():
@@ -423,7 +424,7 @@ def start_recording(title: str = "") -> dict:
     return recording_status()
 
 
-def stop_recording() -> dict:
+def stop_recording() -> dict[str, Any]:
     """Stoppt die laufende Aufnahme. Das fertige Meeting (mit Sprechern und Zusammenfassung) erscheint nach
     ein bis zwei Minuten; dann findet es list_meetings."""
     if (live() or {}).get("state") != "recording":
@@ -453,7 +454,7 @@ def live_transcript(last_minutes: float = 0) -> str:
 
 # ---------- widget data (MCP Apps, Claude Desktop): called by widget.html, hidden from the model ----------
 
-def meeting_data(meeting_id: str) -> dict:
+def meeting_data(meeting_id: str) -> dict[str, Any]:
     """Nur für das Widget: ein Meeting als strukturierte Daten."""
     stem = resolve(meeting_id)
     md = read(stem)
@@ -461,7 +462,7 @@ def meeting_data(meeting_id: str) -> dict:
             "transcript": [{"t": stamp(t), "speaker": spk or "", "text": text} for t, spk, text in transcript(md)]}
 
 
-def live_data() -> dict:
+def live_data() -> dict[str, Any]:
     """Nur für das Widget: Status und Live-Transkript des laufenden Meetings."""
     data = live()
     return {**status_of(data), "notes": (data or {}).get("notes", ""),
@@ -473,6 +474,26 @@ VIEWS = {"get_meeting": "meeting", "list_todos": "todos", "list_meetings": "list
          "recording_status": "recording", "start_recording": "recording", "stop_recording": "recording",
          "live_transcript": "recording", "meeting_data": "meeting", "live_data": "recording"}
 APP_ONLY = (meeting_data, live_data)
+# Some hosts (Claude Desktop's Code tab) render widgets but can't relay the widget's own tool calls, so these tools
+# carry the widget's data in structuredContent; the model still reads the usual text.
+WIDGET_DATA = {"get_meeting": lambda kw: meeting_data(kw["meeting_id"]), "recording_status": lambda kw: live_data(),
+               "start_recording": lambda kw: live_data(), "stop_recording": lambda kw: live_data(),
+               "live_transcript": lambda kw: live_data()}
+
+
+def with_widget_data(fn):
+    """fn's text for the model plus WIDGET_DATA for the widget, as one CallToolResult (same name and arguments)."""
+    import inspect
+    from mcp.types import CallToolResult, TextContent
+
+    def tool(**kw):
+        r = fn(**kw)
+        text = r if isinstance(r, str) else json.dumps(r, ensure_ascii=False, indent=2)
+        return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=WIDGET_DATA[fn.__name__](kw))
+    tool.__name__, tool.__doc__ = fn.__name__, fn.__doc__
+    tool.__signature__ = inspect.signature(fn).replace(return_annotation=CallToolResult)
+    tool.__annotations__ = {**fn.__annotations__, "return": CallToolResult}
+    return tool
 
 
 TOOLS = [list_meetings, search_meetings, get_meeting, list_todos,
@@ -588,6 +609,9 @@ def selftest():
     assert "Budget klären" in m["summary"] and "Raum buchen" in m["notes"]
     assert live_data()["state"] == "idle" and live_data()["utterances"] == []
     assert set(VIEWS) - {t.__name__ for t in TOOLS + list(APP_ONLY)} == set()   # no typo in VIEWS
+    r = with_widget_data(get_meeting)(meeting_id="Sprint", parts=["summary"])
+    assert r.content[0].text.startswith("# Sprint Review") and r.structured_content["transcript"][0]["speaker"] == "Johan"
+    assert with_widget_data(recording_status)().structured_content["utterances"] == []
     print("mcp_server selftest ok")
 
 
@@ -602,12 +626,14 @@ def main():
     plain = []
     for tool in TOOLS + list(APP_ONLY):
         if tool.__name__ in VIEWS:
+            wrapped = with_widget_data(tool) if tool.__name__ in WIDGET_DATA else tool
             apps.tool(resource_uri=f"ui://meetingnotes/{VIEWS[tool.__name__]}.html",
-                      visibility=["app"] if tool in APP_ONLY else None)(tool)
+                      visibility=["app"] if tool in APP_ONLY else None,
+                      structured_output=None if wrapped is not tool else True)(wrapped)
         else:
             plain.append(tool)
     server = MCPServer("meetingnotes", extensions=[apps], instructions=(
-        "Meetings aus der lokalen App MeetingNotes (Johans Mac): Transkripte (automatisch erkannt, Deutsch/Englisch, "
+        "Meetings aus der lokalen App MeetingNotes (Johans Mac): Transkripte (automatisch erkannt, Deutsch/Englisch/Portugiesisch, "
         "mit Hörfehlern), eigene Notizen, Zusammenfassungen mit Entscheidungen und To-dos. Zum Finden "
         "search_meetings oder list_meetings, dann get_meeting mit der id. Zitiere Zeitstempel, damit Johan in der "
         "App nachhören kann."))

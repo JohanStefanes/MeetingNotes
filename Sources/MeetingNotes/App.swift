@@ -21,6 +21,11 @@ struct MeetingNotesApp: App {
                   : rec.state == .transcribing ? "ellipsis.circle" : "waveform")
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Einstellungen …") { SettingsWindow.shared.show() }.keyboardShortcut(",")
+            }
+        }
     }
 }
 
@@ -47,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // the call app that was recording with us let go of the mic for ~20 s: the call is over
                 if rec.state == .recording, let app = rec.recordingCall, d.object(forKey: "autoStop") as? Bool ?? true {
                     rec.callGoneTicks = MeetingContext.shared.activeCall() == nil ? rec.callGoneTicks + 1 : 0
-                    if rec.callGoneTicks >= 7 {
+                    if rec.callGoneTicks * 3 >= (d.object(forKey: "autoStopDelay") as? Int ?? 20) {
                         rec.stop()
                         Notifier.shared.callEnded(MeetingContext.appName(app))
                     }
@@ -56,7 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     rec.detectedCall = nil; return
                 }
                 let call = MeetingContext.shared.activeCall()
-                if let call, rec.detectedCall == nil { Notifier.shared.offerRecording(MeetingContext.appName(call)) }
+                if let call, rec.detectedCall == nil {
+                    Notifier.shared.offerRecording("\(MeetingContext.appName(call)) nutzt das Mikrofon. Aufnehmen?")
+                } else if call == nil, d.object(forKey: "calendarReminder") as? Bool ?? true,
+                          let event = MeetingContext.shared.startingEvent() {
+                    Notifier.shared.offerRecording("„\(event.title ?? "Termin")“ beginnt. Aufnehmen?", title: "Termin beginnt")
+                }
                 rec.detectedCall = call
             }
         }
@@ -254,12 +264,14 @@ final class Recorder: ObservableObject {
         refresh()
     }
 
+    static let defaultMeName = NSFullUserName().split(separator: " ").first.map(String.init) ?? "Ich"
+
     static func inputDevices() -> [String] {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio,
                                          position: .unspecified).devices.map(\.localizedName)
     }
 
-    func start(name: String, language: String = "de", device: String, mix: String) {
+    func start(name: String, language: String = UserDefaults.standard.string(forKey: "language") ?? "de", device: String, mix: String) {
         // the engine picks German or English per sentence; -l only matters for the fallback whole-file pass
         guard let script = Bundle.main.url(forResource: "meeting", withExtension: nil) else {
             error = "meeting-Skript fehlt im App-Bundle."; return
@@ -284,8 +296,10 @@ final class Recorder: ObservableObject {
                                                     attendees: MeetingContext.attendeeNames(event))
         if let people = MeetingContext.headcount(event) { env["MEETING_ATTENDEES"] = String(people) }   // caps speaker count
         env["MEETING_PEOPLE"] = MeetingContext.attendeeNames(event).joined(separator: ", ")
-        env["MEETING_ME_NAME"] = NSFullUserName().split(separator: " ").first.map(String.init) ?? "Ich"
+        env["MEETING_ME_NAME"] = d.string(forKey: "meName").flatMap { $0.isEmpty ? nil : $0 } ?? Self.defaultMeName
         env["MEETING_SUMMARY"] = d.string(forKey: "summary") ?? "ollama"
+        env["MEETING_SUMMARY_MODEL"] = d.string(forKey: "summaryModel").flatMap { $0.isEmpty ? nil : $0 }
+        if d.integer(forKey: "speakers") > 0 { env["MEETING_SPEAKERS"] = String(d.integer(forKey: "speakers")) }
         let stamp = Int(Date().timeIntervalSince1970)
         let notesURL = outDir.appendingPathComponent(".notes-\(stamp).md")
         try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -614,6 +628,7 @@ final class Recorder: ObservableObject {
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         let backend = UserDefaults.standard.string(forKey: "summary") ?? "ollama"
         env["MEETING_SUMMARY"] = backend == "off" ? "ollama" : backend   // an explicit click overrides "off"
+        env["MEETING_SUMMARY_MODEL"] = UserDefaults.standard.string(forKey: "summaryModel").flatMap { $0.isEmpty ? nil : $0 }
         p.environment = env
         p.standardError = FileHandle(forWritingAtPath: Self.logFile.path) ?? FileHandle.nullDevice
         p.terminationHandler = { p in
@@ -690,10 +705,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "nothing-recorded", content: content, trigger: nil))
     }
 
-    func offerRecording(_ app: String) {
+    func offerRecording(_ body: String, title: String = "Meeting erkannt") {
         let content = UNMutableNotificationContent()
-        content.title = "Meeting erkannt"
-        content.body = "\(app) nutzt das Mikrofon. Aufnehmen?"
+        content.title = title
+        content.body = body
         content.categoryIdentifier = "meeting"
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "meeting-offer", content: content, trigger: nil))
@@ -776,14 +791,17 @@ final class LiveTranscriber: ObservableObject {
     @Published var speaking = false
     @Published var phase = Phase.live
     @Published var text = ""          // latest sentence, typed out word by word (pill caption, panel)
+    @Published var partial = ""       // sentence still being spoken, revised live by the engine
+    private var partialStart = 0.0
     private var typer: Timer?
 
     func reset() {
-        bubbles = []; speaking = false; phase = .live; text = ""
+        bubbles = []; speaking = false; phase = .live; text = ""; partial = ""
         typer?.invalidate()
         typer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let next = Self.step(shown: self.text, target: self.bubbles.last?.text ?? "")
+            let target = self.partial.isEmpty ? self.bubbles.last?.text ?? "" : self.partial
+            let next = Self.step(shown: self.text, target: target)
             if next != self.text { self.text = next }
         }
     }
@@ -794,8 +812,13 @@ final class LiveTranscriber: ObservableObject {
             let text = Self.clean(e["text"] as? String ?? "")
             guard !text.isEmpty else { return }
             bubbles.append(Bubble(id: e["id"] as? Int ?? bubbles.count, start: e["start"] as? Double ?? 0, text: text))
+            // this sentence is now final; a partial starting near its end (VAD padding) is already the next one
+            if partialStart + 1 < e["end"] as? Double ?? .infinity { partial = "" }
+        case "partial":
+            partial = Self.clean(e["text"] as? String ?? "")
+            partialStart = e["start"] as? Double ?? 0
         case "speaking": speaking = e["on"] as? Bool ?? false
-        case "stopped": speaking = false; phase = .labeling
+        case "stopped": speaking = false; partial = ""; phase = .labeling
         case "done": phase = .done; typer?.invalidate()
         default: break
         }
@@ -1050,6 +1073,7 @@ struct PillView: View {
     precondition(b.map(\.speaker) == ["Johan", "Sprecher 2", nil] && b[1].start == 62 && b[0].text == "Hallo.")
     precondition(MeetingContext.terms("# Kopf\nOpenTwin, Wispr\n  Johan # ich\n\n") == ["OpenTwin", "Wispr", "Johan"])
     precondition(MeetingContext.vocab(own: ["Anna", "X"], attendees: ["anna", "Bob"]) == "Anna, X, Bob")
+    precondition(MeetingContext.vocab(own: ["X"], attendees: (0...MeetingContext.promptAttendeeLimit).map { "P\($0)" }) == "X")
     precondition(Recorder.slug("Kunden-Call: Q4 ✓") == "Kunden-Call-Q4")
 
     // aggregate input: a 2-channel mic buffer, then a 1-channel tap buffer → [mic avg, system] pairs

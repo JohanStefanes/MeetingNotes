@@ -301,7 +301,7 @@ struct NoteView: View {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     transcriptBar.padding(.bottom, 14)
                     if live.bubbles.isEmpty && !live.speaking {
-                        Text(rec.state == .recording ? "Hört zu … der Text erscheint nach jedem Satz." : "Noch kein Transkript.")
+                        Text(rec.state == .recording ? "Hört zu … der Text erscheint live." : "Noch kein Transkript.")
                             .foregroundStyle(Theme.muted).padding(.top, 4)
                     }
                     ForEach(Array(live.bubbles.enumerated()), id: \.element.id) { i, b in
@@ -321,7 +321,9 @@ struct NoteView: View {
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
                     }
-                    if rec.state == .recording && live.speaking {
+                    if rec.state == .recording && !live.partial.isEmpty {
+                        bubble(live.partial).foregroundStyle(Theme.muted)   // not final yet: whisper may still revise it
+                    } else if rec.state == .recording && live.speaking {
                         TypingDots(tint: Theme.accent)
                             .padding(.horizontal, 16).padding(.vertical, 14)
                             .background(Theme.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -334,6 +336,7 @@ struct NoteView: View {
             }
             .onChange(of: live.bubbles.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: live.speaking) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: live.partial) { proxy.scrollTo("end", anchor: .bottom) }
         }
     }
 

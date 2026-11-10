@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Local meeting notes with whisper.cpp (nothing leaves the Mac).
-#   meeting [-l de|en] [-d device] [-m 2nd-device] [name]   record until Ctrl+C, then transcribe
-#   meeting [-l de|en] -s rate [name]                        record stereo float32 from $MEETING_FIFO
+#   meeting [-l de|en|pt] [-d device] [-m 2nd-device] [name]   record until Ctrl+C, then transcribe
+#   meeting [-l de|en|pt] -s rate [name]                        record stereo float32 from $MEETING_FIFO
 #                                                            (the app writes mic left + Mac system audio right)
 #   meeting [-l ...] file.m4a                                      transcribe an existing recording
 # Devices: ffmpeg -f avfoundation -list_devices true -i ""   (default = system input)
@@ -22,9 +22,9 @@ USE_ENGINE=0; [[ -x $PY && -f $ENGINE ]] && USE_ENGINE=1
 if [[ $# -gt 0 && -f $1 ]]; then
   AUDIO=$1; BASE=$OUT/${${1:t}:r}
   TMP=$(mktemp -d); WAV=$TMP/in.wav FULL=$TMP/full.wav
-  ffmpeg -hide_banner -loglevel error -y -i "$AUDIO" -ac 1 -ar 16000 "$WAV"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$AUDIO" -ac 1 -ar 16000 "$WAV"
   # channels kept for the speaker step: a stereo app recording still tells "Ich" (mic) from the others
-  ffmpeg -hide_banner -loglevel error -y -i "$AUDIO" -ar 16000 -c:a pcm_s16le "$FULL"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$AUDIO" -ar 16000 -c:a pcm_s16le "$FULL"
   if (( USE_ENGINE )); then "$PY" -I "$ENGINE" --file "$WAV" --wav "$FULL" --out "$BASE.txt"; fi
 else
   BASE=$OUT/$(date +%Y-%m-%d_%H%M)${1:+_$1}
@@ -86,9 +86,17 @@ if (( words < 3 )) && [[ ! -s ${MEETING_NOTES:-} ]]; then
   exit 3
 fi
 
-# keep the recording as AAC (~25 MB/h instead of ~115 MB/h of wav); everything that needed the wav is done
+# keep the recording as AAC (~25 MB/h instead of ~115 MB/h of wav); everything that needed the wav is done.
+# -nostdin: the app's stop "q" can still sit unread in our stdin and would end this ffmpeg after a minute or so.
+# The wav is only deleted when the m4a is as long as it (within 1 s).
 if [[ $AUDIO == $OUT/audio/*.wav && ${MEETING_KEEP_WAV:-0} != 1 ]]; then
-  ffmpeg -hide_banner -loglevel error -y -i "$WAV" -c:a aac -b:a 48k "${WAV:r}.m4a" && rm "$WAV" && AUDIO=${WAV:r}.m4a
+  len() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null || echo 0; }
+  if ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WAV" -c:a aac -b:a 48k "${WAV:r}.m4a" \
+     && (( $(len "${WAV:r}.m4a") + 1 >= $(len "$WAV") )); then
+    rm "$WAV"; AUDIO=${WAV:r}.m4a
+  else
+    rm -f "${WAV:r}.m4a"   # keep the wav; a short m4a must never replace it
+  fi
 fi
 { echo "# Meeting ${BASE:t}"; echo; echo "Audio: $AUDIO"; [[ -n ${MEETING_PEOPLE:-} ]] && { echo; echo "Teilnehmer: $MEETING_PEOPLE"; }
   echo; echo '## Transcript'; echo; sed 's/$/  /' "$BASE.txt"
