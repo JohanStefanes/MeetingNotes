@@ -24,7 +24,9 @@ import wave
 
 HELPER = os.environ.get("MEETING_DIARIZE") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "MacOS", "meeting-diarize")   # inside MeetingNotes.app
-PARAGRAPH = 250  # chars: one speaker talking long starts a new line at the next sentence end
+PARAGRAPH = 160  # chars: one speaker talking long starts a new line at the next sentence end …
+LINE_SPAN = 15.0  # … and so does a line that already covers this many seconds (finer timestamps to listen back)
+SENTENCE_MAX = 20.0  # s: whisper pieces are joined into one sentence (one speaker) up to this length
 LINE = re.compile(r"^\[(\d+):(\d+):(\d+)\.(\d+) --> (\d+):(\d+):(\d+)\.(\d+)\]\s*(.*)$")
 ME = "me"                 # speaker id for the microphone side of a stereo recording
 MIN_SPEAKER_S = 20.0      # a real speaker talks at least this long …
@@ -54,6 +56,19 @@ def parse_whisper(text):
     return segs
 
 
+def sentences(segs):
+    """Joins whisper pieces that continue an unfinished sentence ("… to provide it to" + "an people."), so a speaker
+    change can't cut a sentence in two: the whole sentence then goes to the speaker with the largest time share."""
+    out = []
+    for start, end, text in segs:
+        if out and not out[-1][2].endswith((".", "!", "?")) and start - out[-1][1] < 1.0 \
+                and end - out[-1][0] <= SENTENCE_MAX:
+            out[-1] = (out[-1][0], end, f"{out[-1][2]} {text}")
+        else:
+            out.append((start, end, text))
+    return out
+
+
 def assign(segs, turns):
     """Each whisper segment gets the speaker it overlaps most; with no overlap, the nearest turn."""
     out = []
@@ -81,7 +96,8 @@ def render(labeled, me_name=None):
             names[spk] = me_name if spk == ME else f"Sprecher {sum(1 for k in names if k != ME) + 1}"
         if lines and lines[-1][1] == spk:
             prev = lines[-1][2]
-            long_and_done = len(" ".join(prev)) > PARAGRAPH and prev[-1].endswith((".", "!", "?"))
+            full = len(" ".join(prev)) > PARAGRAPH or start - lines[-1][0] >= LINE_SPAN
+            long_and_done = full and prev[-1].endswith((".", "!", "?"))
             if not long_and_done:
                 prev.append(text)
                 continue
@@ -178,6 +194,7 @@ def remote_active(sys_audio, rate):
 
 def label(segs, wav_path):
     """[(start, end, text)] + recording → [(start, speaker, text)]."""
+    segs = sentences(segs)
     rate, audio = load(wav_path)
     mic = audio[:, 0]
     sys_audio = audio[:, 1] if audio.shape[1] > 1 else None
@@ -265,7 +282,8 @@ def find_me(turns, embed, voice=None):
 
 def mark_me(turns, embed, voice=None):
     """Relabels your turns as ME using the enrolled voice: long turns by their own voice, short ones by the speaker
-    they were clustered into."""
+    they were clustered into, but only next to a long turn of yours. A short blip of the room clustered with your
+    voice ("an people." mid-sentence of someone else) stays theirs."""
     import numpy as np
 
     if voice is None:
@@ -273,10 +291,15 @@ def mark_me(turns, embed, voice=None):
             return turns
         voice = np.load(VOICE)
     me = find_me(turns, embed, voice)
+    vecs = [embed(a, b) if b - a >= 1.5 else None for a, b, _ in turns]
+    long_me = [v is not None and float(v @ voice) >= ME_TURN for v in vecs]
     out = []
-    for a, b, s in turns:
-        v = embed(a, b) if b - a >= 1.5 else None
-        mine = float(v @ voice) >= ME_TURN if v is not None else s == me
+    for i, (a, b, s) in enumerate(turns):
+        if vecs[i] is not None:
+            mine = long_me[i]
+        else:
+            near = [long_me[j] for j in (i - 1, i + 1) if 0 <= j < len(turns) and vecs[j] is not None]
+            mine = s == me and any(near)
         out.append((a, b, ME if mine else s))
     return out
 
@@ -347,6 +370,18 @@ def selftest():
     merged = lambda a, b: fake_embed(a, b)
     assert [s for _, _, s in mark_me([(0, 30, "A"), (30, 60, "A"), (60, 61, "A")], lambda a, b: merged(a, b),
                                      voice=me / np.linalg.norm(me))] == ["A", ME, "A"]
+    # short turn of "your" cluster: yours only next to a long turn of yours
+    own = lambda a, b: unit(me if (a, b) in ((0, 30), (31, 60)) else [1, 0, 0])
+    tm = [(0, 30, "M"), (30, 30.5, "M"), (31, 60, "M"), (60, 60.5, "M"), (61, 90, "X"), (90, 90.5, "M")]
+    assert [s for _, _, s in mark_me(tm, own, voice=unit(me))] == [ME, ME, ME, ME, "X", "M"]
+    # a sentence cut by whisper stays whole and goes to the speaker with the most time in it
+    cut = [(0.0, 4.0, "to provide it to"), (4.2, 5.0, "an people."), (5.5, 7.0, "Next one.")]
+    assert sentences(cut) == [(0.0, 5.0, "to provide it to an people."), (5.5, 7.0, "Next one.")]
+    assert assign(sentences(cut), [(0, 4.1, "F"), (4.1, 5.2, ME), (5.2, 9, "F")])[0][1] == "F"
+    assert len(sentences([(0, 15, "a"), (15.5, 30, "b.")])) == 2   # no sentence longer than SENTENCE_MAX
+    # one speaker, short sentences: a new line every LINE_SPAN seconds
+    talk = [(float(t), 0, "Kurz.") for t in range(0, 40, 4)]
+    assert [ln[:10] for ln in render(talk).splitlines()] == ["[00:00:00]", "[00:00:16]", "[00:00:32]"]
     loud, quiet = np.full(1600, 0.05, np.float32), np.zeros(1600, np.float32)
     assert side(loud, quiet, 3) == ME and side(quiet, loud, 3) == 3
     assert side(quiet, quiet, 3) == 3   # sentence tail in a pause: not yours

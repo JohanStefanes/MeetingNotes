@@ -61,7 +61,7 @@ echo "📝 Transcribing ($LANGUAGE)…"
 # -ml 1 -sow: one timestamped word per line, so speaker changes can split mid-sentence
 whisper-cli -m "$MODELS/ggml-large-v3-turbo.bin" -f "$WAV" -l "$LANGUAGE" -t 8 -np -ml 1 -sow \
   --vad -vm "$MODELS/ggml-silero-v5.1.2.bin" \
-  --prompt "Besprechung auf Deutsch und Englisch, mit Akzenten. Meeting in German and English.${MEETING_VOCAB:+ Begriffe: ${MEETING_VOCAB:0:600}.}" > "$BASE.raw"
+  --prompt "Besprechung auf Deutsch und Englisch, mit Akzenten. Meeting in German and English.${MEETING_VOCAB:+ Über ${MEETING_VOCAB:0:600}.}" > "$BASE.raw"
 
 # Speaker labels (offline); without the venv/models or on any error, keep the plain transcript.
 PY=$HOME/.meeting-notes/venv/bin/python

@@ -57,8 +57,15 @@ final class SystemAudio {
         guard fd >= 0 else { throw Failure("FIFO lässt sich nicht öffnen") }
         let micCh = micChannels
         let out = fd
+        let opened = Date()
+        var waiting = true   // only touched on the serial tap queue
         try check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, DispatchQueue(label: "MeetingNotes.tap")) {
             _, input, _, _, _ in
+            if waiting {   // audio has started minutes late before (ROADMAP); the log shows when it really begins
+                waiting = false
+                let s = String(format: "%.1f", Date().timeIntervalSince(opened))
+                Task { @MainActor in Recorder.log("Mikrofon + Mac-Ton: erstes Audio \(s) s nach dem Start") }
+            }
             let frames = Self.interleave(UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input)),
                                          micChannels: micCh)
             frames.withUnsafeBytes { raw in
