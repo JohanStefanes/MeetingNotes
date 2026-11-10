@@ -78,7 +78,7 @@ ASR (WER mit `tests/compare.py`, ohne Wörterbuch): whisper large-v3-turbo 12,1 
 - [ ] Ton beginnt teils Minuten nach dem Start der Aufnahme (DAPP Sync 2026-11-10: ~5½ min). Vermutlich neue Mac-Ton-Freigabe nach einem Neubau; prüfen.
 - [ ] Beides in einem echten Meeting prüfen. `MIC_VOICE` (0,01) ist geschätzt; mit `MEETING_KEEP_WAV=1` am eigenen Mikrofon messen.
 - [ ] Sprecherwechsel: Ganze Sätze landen am Wechsel beim falschen Sprecher (z. B. 18:51, 31:25, 42:54). Satz am Wechsel nach Zeitanteil aufteilen oder neu zuordnen.
-- [x] Schweizerdeutsch wird als Englisch erkannt und ergibt Unsinn. Seit 2026-11-10: Ein englisches Ergebnis mit schwacher Sicherheit (`LANG_DOUBT`, avg_logprob < -0,5; gilt auch für Portugiesisch) wird zusätzlich als Deutsch transkribiert, das wahrscheinlichere gewinnt. Schwelle geschätzt, an echter Aufnahme prüfen.
+- [x] Schweizerdeutsch wird als Englisch erkannt und ergibt Unsinn. Seit 2026-11-10: Ein englisches Ergebnis mit schwacher Sicherheit (`LANG_DOUBT`: Portugiesisch < -0,5, Englisch erst < -1,0, weil Englisch mit Akzent sonst ins Deutsche übersetzt wurde) wird zusätzlich als Deutsch transkribiert, das wahrscheinlichere gewinnt. Schwellen geschätzt, an echter Aufnahme prüfen.
 - [x] Erfundene Sätze filtern (z. B. „Wir sehen uns im Video“): Sperrliste `PHANTOM` in `engine.py` (2026-11-10). Offen: Pegel-Abgleich für Floskeln, die nicht auf der Liste stehen.
 - [x] Wörterbuch ergänzt (2026-11-10): Vercel, Simli, Four-Part Sketch, Issue-Liste, Feature, Go/No-Go u. a.
 - [ ] Zusammenfassung: Es gab ein falsches To-do, und Kernpunkte fehlten (Deadlines, Go/No-Go). Prompt schärfen und Fristen ausdrücklich abfragen.

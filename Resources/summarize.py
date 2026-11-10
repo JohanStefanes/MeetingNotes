@@ -39,15 +39,21 @@ SYSTEM = """Du fasst Meeting-Transkripte zusammen. Das Transkript ist automatisc
 deute sie sinnvoll, erfinde aber nichts. Schreibe auf Deutsch, knapp und konkret.
 - title: kurzer, konkreter Titel für das Meeting (2 bis 6 Wörter), ohne Datum und ohne Anführungszeichen.
   Die App benennt damit Meetings, die beim Start keinen Namen bekommen haben.
-- summary: 2 bis 4 Sätze, worum es ging und was herauskam.
-- decisions: was entschieden oder vereinbart wurde.
-- todos: konkrete Aufgaben. owner = wer es übernimmt (Name oder Sprecher-Bezeichnung wie im Transkript), sonst leer.
-  due = Termin, falls genannt, sonst leer.
-- open_questions: offene Fragen und ungeklärte Punkte.
-- ideas: Ideen und Vorschläge, die genannt wurden.
+- summary: 2 bis 4 Sätze, worum es ging und was herauskam. Das Wichtigste zuerst, mit den konkreten Zahlen, Beträgen
+  und Fristen, die genannt wurden (z. B. Sparziele, Termine, Preise).
+- decisions: nur, was in diesem Meeting entschieden oder vereinbart wurde. Mitteilungen über Dinge, die anderswo
+  entschieden wurden (z. B. „X wurde eingestellt“), gehören in summary, nicht hierher.
+- todos: konkrete Aufgaben, die jemand erledigen soll. Keine Empfehlungen an alle, keine Ankündigungen.
+  owner = wer es übernimmt (Name oder Sprecher-Bezeichnung wie im Transkript), sonst leer.
+  due = Termin, wie er genannt wurde, ohne „bis“ davor (z. B. „Freitag“, „20. November“), sonst leer.
+- open_questions: nur Fragen, die im Meeting unbeantwortet blieben. Eine Frage, auf die jemand geantwortet hat,
+  ist nicht offen.
+- ideas: Ideen und Vorschläge, die genannt, aber nicht beschlossen wurden.
 - issues: Probleme, Bugs, Risiken, die angesprochen wurden.
 - at: Zeitstempel hh:mm:ss der Transkriptzeile, aus der der Punkt stammt.
-Leere Listen sind in Ordnung. Die Notizen des Nutzers (falls vorhanden) zeigen, was ihm wichtig war."""
+Jeder Punkt steht nur in einer Liste: Was beschlossen ist, ist keine Idee mehr; ein To-do wird nicht zusätzlich als
+Entscheidung aufgeführt. Leere Listen sind in Ordnung. Die Notizen des Nutzers (falls vorhanden) zeigen, was ihm
+wichtig war."""
 HEADINGS = [("decisions", "Entscheidungen"), ("todos", "To-dos"), ("open_questions", "Offene Punkte"),
             ("ideas", "Ideen"), ("issues", "Probleme")]
 
@@ -75,8 +81,8 @@ def render(data):
         for it in items:
             at = f" `{it['at']}`" if re.fullmatch(STAMP, it.get("at", "")) else ""
             if key == "todos":
-                extra = "".join([f" · **{it['owner']}**" if it.get("owner") else "",
-                                 f" · bis {it['due']}" if it.get("due") else ""])
+                due = re.sub(r"^bis\s+", "", it.get("due", "").strip(), flags=re.I)   # models still write "bis Freitag"
+                extra = "".join([f" · **{it['owner']}**" if it.get("owner") else "", f" · bis {due}" if due else ""])
                 out.append(f"- [ ] {it['text']}{extra}{at}")
             else:
                 out.append(f"- {it['text']}{at}")
@@ -171,6 +177,8 @@ def selftest():
     assert SCHEMA["required"][0] == "title" and "title" in SCHEMA["properties"]
     assert section == ("## Zusammenfassung\n\nKurz.\n\n### Entscheidungen\n\n- Wir bauen X `00:00:05`\n\n"
                        "### To-dos\n\n- [ ] Mail schicken · **Ich**\n")
+    todo = {"text": "T", "owner": "", "due": "bis Freitag", "at": ""}
+    assert render(data | {"todos": [todo]}).endswith("- [ ] T · bis Freitag\n")   # no "bis bis"
     once = insert(md, section)
     assert once.index("## Zusammenfassung") < once.index("## Transcript") and once.endswith("wichtig\n")
     assert insert(once, render(data | {"summary": "Neu."})).count("## Zusammenfassung") == 1   # rerun replaces

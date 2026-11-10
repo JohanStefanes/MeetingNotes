@@ -292,7 +292,8 @@ final class Recorder: ObservableObject {
 
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"  // GUI apps get no Homebrew PATH
-        env["MEETING_VOCAB"] = MeetingContext.vocab(own: MeetingContext.shared.vocabulary(),
+        // the title first: it names the project ("DAPP Sync"), which whisper otherwise hears as "DA40"
+        env["MEETING_VOCAB"] = MeetingContext.vocab(own: (name.isEmpty ? [] : [name]) + MeetingContext.shared.vocabulary(),
                                                     attendees: MeetingContext.attendeeNames(event))
         if let people = MeetingContext.headcount(event) { env["MEETING_ATTENDEES"] = String(people) }   // caps speaker count
         env["MEETING_PEOPLE"] = MeetingContext.attendeeNames(event).joined(separator: ", ")

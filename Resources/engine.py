@@ -155,12 +155,40 @@ NOISE = re.compile(r"\b(Begriff(e|en)?|Terms?|Termos?):\s*|\*[^*]{1,30}\*\s*")
 STOCK_EN = re.compile(r"^(thank you( very much| so much)?|thanks|see you( later)?|bye( bye)?|you)[.!]?$", re.I)
 
 
+def unloop(t):
+    """whisper's decoding loop: a phrase of 2–6 words 3+ times in a row ("Vercel, Begriff, Vercel, Begriff, …")
+    keeps one copy (punctuation ignored when comparing); a sentence of 4+ words twice in a row keeps one.
+    Single words are left alone: "Ja. Ja. Ja." is how people talk."""
+    toks = re.findall(r"\S+\s*", t)
+    key = [re.sub(r"\W+", "", x).lower() for x in toks]
+    out, i = [], 0
+    while i < len(toks):
+        for n in range(2, 7):
+            reps = 1
+            while key[i:i + n] == key[i + reps * n:i + (reps + 1) * n] and all(key[i:i + n]):
+                reps += 1
+            if reps >= 3:
+                out += toks[i + (reps - 1) * n:i + reps * n]   # the last copy keeps its own end punctuation
+                i += reps * n
+                break
+        else:
+            out.append(toks[i])
+            i += 1
+    t = "".join(out).strip()
+    out = []
+    for x in re.split(r"(?<=[.!?])\s+", t):
+        norm = re.sub(r"\W+", " ", x).strip().lower()
+        if not (out and len(norm.split()) >= 4 and norm == re.sub(r"\W+", " ", out[-1]).strip().lower()):
+            out.append(x)
+    return " ".join(out)
+
+
 def scrub(segments, language="de"):
-    """Drop invented subtitle sentences (PHANTOM), prompt/sound noise and, outside English, lone English stock
-    phrases; a segment left empty disappears."""
+    """Drop invented subtitle sentences (PHANTOM), prompt/sound noise, decoding loops and, outside English, lone
+    English stock phrases; a segment left empty disappears."""
     out = []
     for s, e, t in segments:
-        t = NOISE.sub("", t).strip()
+        t = unloop(NOISE.sub("", t).strip())
         keep = [x for x in re.split(r"(?<=[.!?])\s+", t)
                 if x and not PHANTOM.search(x) and not (language != "en" and STOCK_EN.match(x))]
         if keep:
@@ -375,6 +403,10 @@ def selftest():
     assert scrub([(0, 1, "Begriff: Okay, gut. *ding* Ja."), (1, 2, "*sad*")]) == [(0, 1, "Okay, gut. Ja.")]
     assert scrub([(0, 1, "Ich bin Stress. Thank you. Vielen Dank.")]) == [(0, 1, "Ich bin Stress. Vielen Dank.")]
     assert scrub([(0, 1, "Thank you.")], "en") == [(0, 1, "Thank you.")]
+    assert unloop("Gut. Vercel, Begriff, Vercel, Begriff, Vercel, Begriff, Verde, ok?") == "Gut. Vercel, Begriff, Verde, ok?"
+    assert unloop("So, the first thing, the first thing, the first thing. Ja.") == "So, the first thing. Ja."
+    assert unloop("Da. - I think it's good. - I think it's good.") == "Da. - I think it's good."
+    assert unloop("Ja. Ja. Ja. Nein, nein, nein.") == "Ja. Ja. Ja. Nein, nein, nein."   # single words stay
     print("engine selftest ok")
 
 
